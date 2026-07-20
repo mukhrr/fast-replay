@@ -17,7 +17,7 @@ import {
   TargetResolutionError,
   type ResolveTimeouts,
 } from './resolve.js';
-import { expandValue } from './values.js';
+import { createExpander, type Expander } from './values.js';
 import { waitForReaction } from './waits.js';
 
 const execAsync = promisify(exec);
@@ -107,6 +107,9 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
   const baseUrl = options.baseUrl ?? repro.baseUrl;
   const paths = reproPaths(repro.name, root);
   const expectFixed = options.expectFixed ?? false;
+  // One expander per run: a named placeholder resolves identically across every
+  // step, selector and wait here, and differently on the next run.
+  const expand = createExpander();
   const notes: string[] = [];
   const startedAt = Date.now();
 
@@ -142,7 +145,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
 
       let candidateIndex = -1;
       try {
-        candidateIndex = await performStep(page, step, baseUrl, options);
+        candidateIndex = await performStep(page, step, baseUrl, options, expand);
       } catch (err) {
         return await fail(
           {
@@ -174,7 +177,13 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
       const actMs = Date.now() - stepStart;
       const outcome = await waitForReaction(
         { page, baseUrl, network: reactions.network, since: stepStart },
-        step.waitAfter,
+        {
+          ...step.waitAfter,
+          // A value made unique with {{random:name}} changes the accessible
+          // names derived from it, so the waits must expand the same way.
+          domAppeared: expand.expandAll(step.waitAfter.domAppeared),
+          domGone: expand.expandAll(step.waitAfter.domGone),
+        },
       );
 
       if (!outcome.ok && expectFixed) {
@@ -229,6 +238,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
       { page, baseUrl, network: reactions.network, since: stepStart },
       repro,
       expectFixed,
+      expand,
     );
     if (finalOutcome && !finalOutcome.ok) {
       const last = repro.steps[repro.steps.length - 1];
@@ -380,9 +390,11 @@ async function waitForFinalState(
   ctx: Parameters<typeof waitForReaction>[0],
   repro: Repro,
   expectFixed: boolean,
+  expand: Expander,
 ): Promise<{ ok: boolean; unmet: string[] } | null> {
   if (expectFixed) return null;
-  const { domAppeared, domGone } = repro.assertion.finalState;
+  const domAppeared = expand.expandAll(repro.assertion.finalState.domAppeared);
+  const domGone = expand.expandAll(repro.assertion.finalState.domGone);
   if (!domAppeared?.length && !domGone?.length) return null;
 
   const outcome = await waitForReaction(ctx, {
@@ -435,6 +447,7 @@ async function performStep(
   step: Step,
   baseUrl: string,
   options: RunOptions,
+  expand: Expander,
 ): Promise<number> {
   const timeouts = options.resolveTimeouts ?? DEFAULT_RESOLVE_TIMEOUTS;
 
@@ -456,7 +469,11 @@ async function performStep(
 
   if (!step.target) throw new Error(`Step ${step.id} (${step.action}) has no target to act on.`);
 
-  const resolved = await resolveTarget(page, step.target, timeouts, options.onStepFailure);
+  const target = {
+    ...step.target,
+    candidates: expand.expandAll(step.target.candidates) ?? step.target.candidates,
+  };
+  const resolved = await resolveTarget(page, target, timeouts, options.onStepFailure);
   const { locator } = resolved;
 
   switch (step.action) {
@@ -470,10 +487,10 @@ async function performStep(
       await locator.hover();
       break;
     case 'fill':
-      await locator.fill(expandValue(step.value) ?? '');
+      await locator.fill(expand.expand(step.value) ?? '');
       break;
     case 'select':
-      await locator.selectOption(expandValue(step.value) ?? '');
+      await locator.selectOption(expand.expand(step.value) ?? '');
       break;
     case 'press':
       await locator.press(step.value ?? 'Enter');

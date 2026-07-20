@@ -180,6 +180,15 @@ repro run my-bug --setup "npm run db:reset"
 "value": "merchant:walmart-{{random}}"   // {{uuid}} {{now}} {{isodate}}
 ```
 
+A changed input invalidates anything downstream that embedded the old one — rename a sensor and a recorded wait on `role=button[name="Delete Boiler inlet"]` stops matching, because that accessible name was derived from the value. So placeholders can be **named**, and a name expands to the same string everywhere in one run and differently on the next:
+
+```jsonc
+"value":       "Boiler-{{random:sensor}}",
+"domAppeared": ["role=button[name=\"Delete Boiler-{{random:sensor}}\"]"]
+```
+
+Placeholders are expanded in values, selector candidates, and DOM waits. Anonymous `{{random}}` still yields a fresh value at every occurrence.
+
 `--setup` is a CLI/API option and deliberately **not** a field in the IR: a repro file is something you download, hand-edit and share, and one that can execute shell commands is a liability.
 
 When `--expect-fixed` passes but most steps did not behave as recorded, the run says so — that pattern is what a single-shot repro looks like on its second run.

@@ -3,7 +3,7 @@ import { compile, deriveAssertion } from '../src/compiler/compile.js';
 import { checkBugRecurred, checkInvariants } from '../src/replayer/invariants.js';
 import { isStableClass, isStableToken } from '../src/recorder/agent/text.js';
 import { isIncidentalRequest } from '../src/noise.js';
-import { expandValue, hasPlaceholder } from '../src/replayer/values.js';
+import { createExpander, hasPlaceholder } from '../src/replayer/values.js';
 import type { Repro } from '../src/ir/schema.js';
 import type { RawActionEvent, RecordingTrace } from '../src/recorder/types.js';
 
@@ -238,20 +238,38 @@ describe('single-shot repros', () => {
   // --expect-fixed returns green regardless of any fix. Unique inputs make each
   // replay create fresh state.
   it('expands placeholders to a different value every run', () => {
-    const a = expandValue('merchant:walmart-{{random}}');
-    const b = expandValue('merchant:walmart-{{random}}');
+    const a = createExpander().expand('merchant:walmart-{{random}}');
+    const b = createExpander().expand('merchant:walmart-{{random}}');
     expect(a).toMatch(/^merchant:walmart-\w+$/);
     expect(a).not.toBe(b);
   });
 
+  it('resolves a NAMED placeholder identically across one run', () => {
+    // A unique input changes the accessible names derived from it, so the
+    // selectors and waits that embedded the old value have to move with it.
+    const run1 = createExpander();
+    const value = run1.expand('Boiler-{{random:sensor}}');
+    const wait = run1.expand('role=button[name="Delete Boiler-{{random:sensor}}"]');
+    expect(wait).toBe(`role=button[name="Delete ${value}"]`);
+
+    // ...and differently on the next run, which is the entire point.
+    expect(createExpander().expand('Boiler-{{random:sensor}}')).not.toBe(value);
+  });
+
+  it('keeps anonymous placeholders independent', () => {
+    const e = createExpander();
+    expect(e.expand('{{random}}')).not.toBe(e.expand('{{random}}'));
+  });
+
   it('leaves an unknown placeholder visible instead of blanking the field', () => {
     // A typo should surface in the failure message, not silently submit "".
-    expect(expandValue('hello {{nope}}')).toBe('hello {{nope}}');
+    expect(createExpander().expand('hello {{nope}}')).toBe('hello {{nope}}');
   });
 
   it('leaves ordinary values untouched', () => {
-    expect(expandValue('Weekly rollup')).toBe('Weekly rollup');
-    expect(expandValue(null)).toBeNull();
+    const e = createExpander();
+    expect(e.expand('Weekly rollup')).toBe('Weekly rollup');
+    expect(e.expand(null)).toBeNull();
     expect(hasPlaceholder('Weekly rollup')).toBe(false);
     expect(hasPlaceholder('{{uuid}}')).toBe(true);
   });

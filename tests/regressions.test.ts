@@ -294,3 +294,70 @@ describe('hash-routed apps', () => {
     expect(pathOf(`${BASE_URL}/`, BASE_URL)).toBe('/');
   });
 });
+
+describe('pdu_html round: recorder', () => {
+  it('never lets a resize-detector probe scroll become a step', async () => {
+    // element-resize-detector scrolls an offscreen probe during layout. It was
+    // recorded as author:"human" and ordered BEFORE the goto that creates the
+    // page, so its selector could never resolve and step one always failed.
+    const { chromium } = await import('playwright');
+    const { agentSource } = await import('../src/recorder/instrument.js');
+    const { DEFAULT_AGENT_CONFIG } = await import('../src/recorder/agent/config.js');
+
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const context = await browser.newContext();
+      const captured: { action?: string }[] = [];
+      await context.exposeBinding(DEFAULT_AGENT_CONFIG.emitBinding, (_s, ev) => {
+        captured.push(ev as { action?: string });
+      });
+      const page = await context.newPage();
+      await page.setContent(`
+        <div class="erd_scroll_detection_container" style="overflow:auto;height:40px">
+          <div style="height:400px"></div>
+        </div>
+        <div id="real" style="overflow:auto;height:40px"><div style="height:400px"></div></div>
+      `);
+      await page.evaluate(agentSource(DEFAULT_AGENT_CONFIG));
+
+      await page.evaluate(() => {
+        document.querySelector('.erd_scroll_detection_container')!.scrollTop = 300;
+        document.getElementById('real')!.scrollTop = 300;
+      });
+      await new Promise((r) => setTimeout(r, 500));
+
+      const scrolls = captured.filter((e) => e.action === 'scroll');
+      expect(scrolls.length, 'the probe scroll must not be recorded').toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('records one click when a label forwards to its control', async () => {
+    // Radix/MUI checkboxes dispatch twice for one physical click. Replaying
+    // both toggles it back, silently running a different flow than recorded.
+    const { chromium } = await import('playwright');
+    const { agentSource } = await import('../src/recorder/instrument.js');
+    const { DEFAULT_AGENT_CONFIG } = await import('../src/recorder/agent/config.js');
+
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const context = await browser.newContext();
+      const clicks: unknown[] = [];
+      await context.exposeBinding(DEFAULT_AGENT_CONFIG.emitBinding, (_s, ev) => {
+        if ((ev as { action?: string }).action === 'click') clicks.push(ev);
+      });
+      const page = await context.newPage();
+      await page.setContent(
+        '<label><button type="button" id="cb">x</button><span>Board Device</span></label>',
+      );
+      await page.evaluate(agentSource(DEFAULT_AGENT_CONFIG));
+
+      await page.click('span');
+      await new Promise((r) => setTimeout(r, 300));
+      expect(clicks.length).toBe(1);
+    } finally {
+      await browser.close();
+    }
+  });
+});

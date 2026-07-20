@@ -14,6 +14,13 @@ import type { Transport } from './transport.js';
  * that calls `stopPropagation` cannot hide a user's action from the recorder.
  */
 
+/**
+ * How close two click events must be to be one physical click. A label
+ * forwarding to its control dispatches synchronously; a human clicking twice
+ * cannot get near this.
+ */
+const ECHO_WINDOW_MS = 30;
+
 /** Keys that carry meaning outside a text field. */
 const MEANINGFUL_KEYS = [
   'Enter',
@@ -69,6 +76,30 @@ export function installCapture(ctx: CaptureContext): void {
   // fill: committed on change/blur, never per keystroke
   const focusValue = new WeakMap<Element, string>();
   const committed = new WeakMap<Element, string>();
+
+  /**
+   * One physical click can dispatch twice: a `<label>` forwards to its control,
+   * so clicking the text of a Radix or MUI checkbox reports both the span and
+   * the underlying button. Replaying both toggles it twice and silently runs a
+   * different flow than the one recorded.
+   */
+  let lastClick: { el: Element; t: number } | null = null;
+
+  function isEchoOfLastClick(el: Element): boolean {
+    const prev = lastClick;
+    const now = Date.now();
+    lastClick = { el, t: now };
+    if (!prev) return false;
+    // A forwarded click is dispatched synchronously, in the same task as the
+    // one that caused it. Anything slower is a person clicking twice.
+    if (now - prev.t > ECHO_WINDOW_MS) return false;
+    // Two events on the SAME element are always a genuine repeat — clicking
+    // "Add" twice in quick succession is a real flow, not an echo.
+    if (prev.el === el) return false;
+    if (prev.el.contains(el) || el.contains(prev.el)) return true;
+    const label = el.closest('label');
+    return Boolean(label && label === prev.el.closest('label'));
+  }
 
   function emitAction(action: Action, el: Element | null, value: string | null): void {
     ctx.beforeAction?.();
@@ -136,6 +167,7 @@ export function installCapture(ctx: CaptureContext): void {
   on('click', (e) => {
     const el = targetOf(e);
     if (!el) return;
+    if (isEchoOfLastClick(el)) return;
     flushPendingFill();
     flushRevealingHover(el);
     emitAction('click', el, null);
@@ -194,6 +226,30 @@ export function installCapture(ctx: CaptureContext): void {
   installScrollCapture(ctx, emitAction);
 }
 
+/**
+ * Offscreen probe elements that libraries scroll programmatically to detect
+ * resizes — element-resize-detector, react-virtualized, ResizeSensor. They fire
+ * a scroll during layout that no user performed, and recording it produces a
+ * step whose selector can never resolve.
+ */
+const RESIZE_PROBE = [
+  '.erd_scroll_detection_container',
+  '.resize-sensor',
+  '.resize-triggers',
+  '[data-resize-sensor]',
+];
+
+function isResizeProbe(el: Element | null): boolean {
+  if (!el) return false;
+  return RESIZE_PROBE.some((sel) => {
+    try {
+      return el.matches(sel) || el.closest(sel) !== null;
+    } catch {
+      return false;
+    }
+  });
+}
+
 /** Scroll is debounced and only recorded when the position actually moved. */
 function installScrollCapture(
   ctx: CaptureContext,
@@ -207,6 +263,7 @@ function installScrollCapture(
     'scroll',
     (e) => {
       const raw = e.target;
+      if (raw && (raw as Node).nodeType === 1 && isResizeProbe(raw as Element)) return;
       const isDocument =
         !raw || raw === document || raw === document.documentElement || raw === document.body;
       const key: object = isDocument ? document : (raw as object);

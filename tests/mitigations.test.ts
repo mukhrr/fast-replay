@@ -221,3 +221,61 @@ describe('aborted requests', () => {
     expect(violations).toEqual([]);
   });
 });
+
+describe('pdu_html round: verdicts', () => {
+  it('lets an explicit criterion override noisy console recurrence', async () => {
+    // An app that always logs a failed i18n fetch made hasBugSignature() true
+    // forever, so --expect-fixed could never pass and the documented escape
+    // hatch was dead code.
+    await recordFlow('criterion-wins');
+    await server.reset();
+
+    const paths = reproPaths('criterion-wins', root);
+    const repro = await readRepro('criterion-wins', root);
+    repro.assertion.observedAtRecord = {
+      consoleErrors: ['Cannot download en.json file. Use fallback file.'],
+      failedRequests: [],
+    };
+    repro.assertion.expectedWhenFixed = { domAppeared: ['[data-testid="report-result"]'] };
+    await writeFile(paths.ir, JSON.stringify(repro, null, 2));
+
+    const result = await run({ name: 'criterion-wins', root, expectFixed: true });
+    expect(result.passed, 'the stated criterion must decide').toBe(true);
+  });
+
+  it('calls an undriveable app an infrastructure failure, not a verdict', async () => {
+    // Reporting "NOT FIXED" when the harness could not drive the app sends
+    // people chasing a bug they already fixed.
+    await recordFlow('infra');
+    await server.reset();
+
+    const paths = reproPaths('infra', root);
+    const repro = await readRepro('infra', root);
+    repro.assertion.expectedWhenFixed = { domAppeared: ['[data-testid="report-result"]'] };
+    repro.steps[1]!.target!.candidates = ['[data-testid="never-exists"]'];
+    await writeFile(paths.ir, JSON.stringify(repro, null, 2));
+
+    const result = await run({ name: 'infra', root, expectFixed: true });
+
+    expect(result.passed).toBe(false);
+    expect(result.failure?.kind).toBe('infrastructure');
+  });
+
+  it('scales recorded waits for a slower machine', async () => {
+    await recordFlow('scaled');
+    await server.reset();
+
+    const paths = reproPaths('scaled', root);
+    const repro = await readRepro('scaled', root);
+    // Far too tight to ever pass unscaled.
+    for (const step of repro.steps) step.waitAfter.timeoutMs = 1;
+    await writeFile(paths.ir, JSON.stringify(repro, null, 2));
+
+    const tight = await run({ name: 'scaled', root });
+    expect(tight.passed).toBe(false);
+
+    await server.reset();
+    const scaled = await run({ name: 'scaled', root, timeoutScale: 15_000 });
+    expect(scaled.passed, 'timeoutScale must widen recorded waits').toBe(true);
+  });
+});

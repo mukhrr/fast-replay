@@ -47,6 +47,13 @@ export interface RunFailure {
   semantic: string;
   expected: string;
   observed: string;
+  /**
+   * `assertion` — the app was driven successfully and the verdict is about the
+   * bug. `infrastructure` — the harness could not drive the app at all, so it
+   * says nothing about whether the bug is fixed. Reporting the second as
+   * "NOT FIXED" sends people chasing a bug they already fixed.
+   */
+  kind: 'assertion' | 'infrastructure';
   artifacts: WrittenArtifacts | null;
 }
 
@@ -99,6 +106,15 @@ export interface RunOptions {
   onStepFailure?: (target: Target, page: Page) => Promise<string | null>;
   /** Replay against a persistent Chromium profile (e.g. to reuse a login). */
   profileDir?: string | null;
+  /**
+   * Multiply every recorded `waitAfter.timeoutMs`.
+   *
+   * Timeouts are derived from what the recording observed, which is wrong when
+   * replay runs somewhere slower than the machine that recorded — a cold dev
+   * server, CI, a heavier dataset. Without this the only fix was hand-editing
+   * every step in the IR.
+   */
+  timeoutScale?: number;
   /**
    * Reuse a running browser across runs. Saves the launch and, more usefully,
    * keeps V8's code cache warm so a large app boots far faster on replay two
@@ -178,6 +194,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
             stepIndex: i,
             semantic,
             expected: expectationOf(step),
+            kind: 'infrastructure',
             observed:
               err instanceof TargetResolutionError
                 ? `no candidate selector matched. Tried:\n${err.attempts
@@ -193,6 +210,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
         { page, baseUrl, network: reactions.network, since: stepStart },
         {
           ...step.waitAfter,
+          timeoutMs: Math.round(step.waitAfter.timeoutMs * (options.timeoutScale ?? 1)),
           // A value made unique with {{random:name}} changes the accessible
           // names derived from it, so the waits must expand the same way.
           domAppeared: expand.expandAll(step.waitAfter.domAppeared),
@@ -223,6 +241,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
             stepId: step.id,
             stepIndex: i,
             semantic,
+            kind: 'assertion',
             expected: expectationOf(step),
             observed: `the action ran, but these recorded signals never arrived within ${step.waitAfter.timeoutMs}ms:\n${outcome.unmet
               .map((u) => `      ${u}`)
@@ -262,6 +281,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
           stepId: last?.id ?? 'assertion',
           stepIndex: repro.steps.length - 1,
           semantic: 'final state assertion',
+          kind: 'assertion',
           expected: describeFinalState(repro),
           observed: `these never arrived within ${FINAL_STATE_TIMEOUT_MS}ms:\n      ${finalOutcome.unmet.join('\n      ')}`,
         },
@@ -290,6 +310,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
             stepId: last?.id ?? 'assertion',
             stepIndex: repro.steps.length - 1,
             semantic: 'fix criterion',
+            kind: 'assertion',
             expected: 'something that distinguishes fixed from broken',
             observed:
               'This repro records no console error and no failed request, so there is nothing ' +
@@ -321,6 +342,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
               stepId: last?.id ?? 'assertion',
               stepIndex: repro.steps.length - 1,
               semantic: 'fix criterion',
+              kind: 'assertion',
               expected: describeState(expected),
               observed: `still not satisfied after ${FINAL_STATE_TIMEOUT_MS}ms:\n      ${outcome.unmet.join('\n      ')}`,
             },
@@ -329,9 +351,19 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
       }
     }
 
-    const recurred = expectFixed
-      ? checkBugRecurred(repro, reactions.network, reactions.console, baseUrl)
-      : [];
+    // Bug-recurrence is a fallback signal, used only when the author has not
+    // said what "fixed" means. Console errors are a poor signature on a real
+    // SPA — an app that always logs a failed i18n fetch would make every
+    // --expect-fixed run report the bug present forever, and no hand-written
+    // criterion could override it. If one is supplied, it decides.
+    const recurred =
+      expectFixed && !hasFixCriterion(repro)
+        ? checkBugRecurred(repro, reactions.network, reactions.console, baseUrl)
+        : [];
+    if (expectFixed && hasFixCriterion(repro)) {
+      const alsoRecurred = checkBugRecurred(repro, reactions.network, reactions.console, baseUrl);
+      for (const detail of alsoRecurred) notes.push(`${detail} (not fatal: expectedWhenFixed governs)`);
+    }
     if (recurred.length) {
       const last = repro.steps[repro.steps.length - 1];
       return await fail(
@@ -340,6 +372,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
           stepId: last?.id ?? 'assertion',
           stepIndex: repro.steps.length - 1,
           semantic: 'bug recurrence check',
+          kind: 'assertion',
           expected: 'the recorded bug not to happen again',
           observed: recurred.join('\n      '),
         },
@@ -365,6 +398,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
           stepId: last?.id ?? 'assertion',
           stepIndex: repro.steps.length - 1,
           semantic: 'final assertion',
+          kind: 'assertion',
           expected: violations
             .map((v) => `${v.invariant} to hold`)
             .filter((v, i, a) => a.indexOf(v) === i)

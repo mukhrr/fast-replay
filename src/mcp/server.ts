@@ -67,6 +67,16 @@ function summarize(result: RunResult, expectFixed: boolean): string {
 
   const f = result.failure;
   if (!f) return head;
+  if (f.kind === 'infrastructure') {
+    return [
+      `COULD NOT VERIFY — ${result.name}`,
+      '',
+      'The replay could not drive the app, so this says nothing about whether the bug is fixed.',
+      `Failing step: ${f.stepId} (step ${f.stepIndex + 1} of ${result.totalSteps})`,
+      `What it does:  ${f.semantic}`,
+      `Observed:      ${f.observed}`,
+    ].join('\n');
+  }
   return [
     head,
     ``,
@@ -134,9 +144,13 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
           .string()
           .optional()
           .describe('Shell command run before replay, to reset state the flow mutates.'),
+        timeout_scale: z
+          .number()
+          .optional()
+          .describe('Multiply every recorded wait. Raise it when replaying somewhere slower than the machine that recorded.'),
       },
     },
-    async ({ name, expect_fixed = false, base_url, headed, profile_dir, setup_command }) => {
+    async ({ name, expect_fixed = false, base_url, headed, profile_dir, setup_command, timeout_scale }) => {
       const result = await run({
         name,
         root,
@@ -147,6 +161,7 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
         ...(headed ? { headed: true } : {}),
         ...(profile_dir ? { profileDir: profile_dir } : {}),
         ...(setup_command ? { setupCommand: setup_command } : {}),
+        ...(timeout_scale ? { timeoutScale: timeout_scale } : {}),
         ...(base_url ? { baseUrl: base_url } : {}),
       });
 
@@ -180,6 +195,7 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
                 observed: result.failure.observed,
               }
             : null,
+          failureKind: result.failure?.kind ?? null,
           invariantViolations: result.invariantViolations,
           screenshot: result.finalScreenshot,
         },

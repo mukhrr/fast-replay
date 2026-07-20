@@ -149,8 +149,11 @@ export function buildCandidates(el: Element): string[] {
     push(withNth(roleName, el, matches));
   }
 
-  push(buildCssPath(el));
+  // Ranked above the CSS path on purpose: when a click lands on an inner node
+  // of a labelled control, `[data-testid="x"]` is strictly more durable than
+  // `[data-testid="x"] > span` or a chain of :nth-of-type positions.
   push(labelledAncestorSelector(el));
+  push(buildCssPath(el));
 
   const text = ownText(el);
   if (text && isSmallestWithText(el, text)) {

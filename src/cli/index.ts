@@ -76,6 +76,7 @@ program
   .option('-u, --url <baseUrl>', 'override the recorded base URL')
   .option('--profile <dir>', 'replay against a persistent Chromium profile (reuses a login)')
   .option('--setup <command>', 'shell command to reset state before replaying')
+  .option('--timeout-scale <n>', 'multiply every recorded wait; raise on slow machines', '1')
   .option(
     '--resolve-timeout <ms>',
     'budget for the first selector candidate; raise it for slow-booting SPAs',
@@ -94,6 +95,7 @@ program
       expectFixed: opts.expectFixed,
       profileDir: opts.profile ?? null,
       setupCommand: opts.setup ?? null,
+      timeoutScale: Number(opts.timeoutScale) || 1,
       // Fallbacks stay cheap probes: half the primary budget.
       resolveTimeouts: { first, subsequent: Math.max(200, Math.round(first / 2)) },
     });
@@ -154,9 +156,16 @@ function reportPass(result: RunResult): void {
 
 function reportFail(result: RunResult): void {
   const f = result.failure;
-  const label = result.expectFixed ? '✗ NOT FIXED' : '✗ FAIL';
+  // An infrastructure failure says nothing about the bug. Reporting it as
+  // "NOT FIXED" sends people chasing a bug they have already fixed.
+  const infra = f?.kind === 'infrastructure';
+  const label = infra ? '✗ COULD NOT VERIFY' : result.expectFixed ? '✗ NOT FIXED' : '✗ FAIL';
   console.log(`${red(label)}  ${bold(result.name)} ${dim(`after ${ms(result.durationMs)}`)}`);
   if (!f) return;
+  if (infra) {
+    console.log(dim('  The replay could not drive the app, so this is not a verdict on the bug.'));
+    console.log(dim('  Fix the step below, or raise --resolve-timeout / --timeout-scale.'));
+  }
 
   console.log('');
   console.log(

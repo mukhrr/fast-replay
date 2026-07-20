@@ -215,6 +215,18 @@ The stress script fails on a single flake rather than on a success rate — a re
 
 `src/recorder/agent/` is the code that runs *inside the browser*. It is bundled by esbuild into `src/recorder/agent-bundle.generated.ts` and injected as source text.
 
+| module | |
+|---|---|
+| `text.ts` | whitespace, escaping, and the stable-token heuristic |
+| `roles.ts` | ARIA role and accessible name |
+| `selectors.ts` | candidate generation and the `semantic` description |
+| `visibility.ts` | is an element actually rendered |
+| `transport.ts` | queued delivery to Node over the exposed binding |
+| `reveal-tracker.ts` | decides when a hover was load-bearing |
+| `dom-reaction.ts` | MutationObserver → appeared/gone selectors |
+| `capture.ts` | DOM events → recorded actions |
+| `page-agent.ts` | wires the above together |
+
 You should not need to think about this — `pretest`, `prebuild` and `prestress` regenerate it automatically — but if you edit the agent directly, run `npm run build:agent`. A test fails loudly if the bundle is ever out of sync with its source.
 
 It is bundled rather than serialized with `Function.prototype.toString()` for a reason worth knowing. Serializing a live function couples what runs in the browser to whichever transform compiled the host: esbuild's `keepNames` rewrites declarations to `__name(fn, "…")`, that helper does not exist in page scope, and the agent threw on its first line and captured **nothing** — silently, with the whole test suite green. The bundle is built once by one toolchain, checked at build time for leaked helpers, and verified in a real browser by `tests/agent-bundle.test.ts`. A non-installing agent is now a hard error rather than an empty repro.

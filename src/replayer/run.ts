@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import type { Page } from 'playwright';
+import type { Browser, Page } from 'playwright';
 import { openBrowser } from '../browser.js';
 import type { Repro, Step, Target } from '../ir/schema.js';
 import { reproPaths, type ReproPaths } from '../ir/io.js';
@@ -100,6 +100,12 @@ export interface RunOptions {
   /** Replay against a persistent Chromium profile (e.g. to reuse a login). */
   profileDir?: string | null;
   /**
+   * Reuse a running browser across runs. Saves the launch and, more usefully,
+   * keeps V8's code cache warm so a large app boots far faster on replay two
+   * onward. Each run still gets its own context.
+   */
+  browser?: Browser | null;
+  /**
    * Shell command run before the browser opens, to reset state the flow mutates.
    *
    * Deliberately NOT a field in the IR: a repro file is something you download,
@@ -128,6 +134,8 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
     viewport: repro.viewport,
     storageStatePath: options.profileDir ? null : storageStatePath(repro, root),
     profileDir: options.profileDir ?? null,
+    // A persistent profile owns its own process, so it cannot share one.
+    browser: options.profileDir ? null : (options.browser ?? null),
   });
 
   try {

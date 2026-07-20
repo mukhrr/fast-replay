@@ -3,6 +3,7 @@ import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { list, readRepro, reproPaths, run } from '../api.js';
+import { BrowserPool } from '../browser.js';
 import type { RunResult } from '../replayer/run.js';
 
 /**
@@ -76,8 +77,29 @@ function summarize(result: RunResult, expectFixed: boolean): string {
   ].join('\n');
 }
 
+export interface ReplayServer {
+  server: McpServer;
+  /** Closes the browsers held open across calls. */
+  dispose(): Promise<void>;
+}
+
 export function createServer(root = process.cwd()): McpServer {
+  return createReplayServer(root).server;
+}
+
+export function createReplayServer(root = process.cwd()): ReplayServer {
   const server = new McpServer({ name: 'replay', version: '0.1.0' });
+
+  /**
+   * One browser, held open for the life of the server.
+   *
+   * A CLI invocation is one-shot and has nothing to amortise, but this process
+   * is long-lived: without a pool every verification launched a fresh Chromium
+   * with an empty V8 code cache, so a large app paid its full cold boot on
+   * every single call. Each run still gets its own context, so replays stay
+   * isolated from one another.
+   */
+  const pool = new BrowserPool();
 
   server.registerTool(
     'repro_run',
@@ -120,6 +142,8 @@ export function createServer(root = process.cwd()): McpServer {
         root,
         expectFixed: expect_fixed,
         captureFinalScreenshot: true,
+        // A persistent profile owns its own process and cannot share the pool.
+        ...(profile_dir ? {} : { browser: await pool.acquire(!headed) }),
         ...(headed ? { headed: true } : {}),
         ...(profile_dir ? { profileDir: profile_dir } : {}),
         ...(setup_command ? { setupCommand: setup_command } : {}),
@@ -269,5 +293,5 @@ export function createServer(root = process.cwd()): McpServer {
     },
   );
 
-  return server;
+  return { server, dispose: () => pool.dispose() };
 }

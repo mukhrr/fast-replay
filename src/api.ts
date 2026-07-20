@@ -120,7 +120,8 @@ export async function list(root = process.cwd()): Promise<ReproSummary[]> {
   return listRepros(root);
 }
 
-export { createServer } from './mcp/server.js';
+export { createReplayServer, createServer } from './mcp/server.js';
+export { BrowserPool } from './browser.js';
 export { STOP_HOTKEY };
 export { deleteRepro, readRepro, reproPaths } from './ir/io.js';
 export { compile } from './compiler/compile.js';

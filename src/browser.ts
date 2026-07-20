@@ -25,6 +25,16 @@ export interface OpenBrowserOptions {
   viewport: { width: number; height: number };
   storageStatePath?: string | null;
   profileDir?: string | null;
+  /**
+   * Reuse an already-running browser instead of launching one.
+   *
+   * Every run otherwise pays a browser launch *and* a cold page load, because a
+   * newly launched Chromium has an empty V8 code cache. Keeping the process
+   * alive across runs leaves that cache warm, which on a large single-page app
+   * is worth far more than the launch itself. Each run still gets its own
+   * context, so isolation between replays is unchanged.
+   */
+  browser?: Browser | null;
 }
 
 export interface OpenedBrowser {
@@ -56,7 +66,8 @@ export async function openBrowser(options: OpenBrowserOptions): Promise<OpenedBr
     };
   }
 
-  const browser: Browser = await chromium.launch({ headless });
+  const borrowed = Boolean(options.browser);
+  const browser: Browser = options.browser ?? (await chromium.launch({ headless }));
   const context = await browser.newContext({
     viewport,
     ...(options.storageStatePath ? { storageState: options.storageStatePath } : {}),
@@ -68,9 +79,40 @@ export async function openBrowser(options: OpenBrowserOptions): Promise<OpenedBr
     persistent: false,
     close: async () => {
       await context.close().catch(() => {});
-      await browser.close().catch(() => {});
+      // A borrowed browser belongs to the caller and outlives this run.
+      if (!borrowed) await browser.close().catch(() => {});
     },
   };
+}
+
+/**
+ * Keeps one browser per headless mode alive across runs.
+ *
+ * Owned by long-lived callers — the MCP server, a stress loop — and closed with
+ * `dispose`. A one-shot CLI invocation has nothing to amortise and does not use
+ * this.
+ */
+export class BrowserPool {
+  private readonly browsers = new Map<boolean, Promise<Browser>>();
+
+  async acquire(headless: boolean): Promise<Browser> {
+    let existing = this.browsers.get(headless);
+    if (existing) {
+      const browser = await existing;
+      if (browser.isConnected()) return browser;
+      this.browsers.delete(headless);
+      existing = undefined;
+    }
+    const launched = chromium.launch({ headless });
+    this.browsers.set(headless, launched);
+    return launched;
+  }
+
+  async dispose(): Promise<void> {
+    const all = Array.from(this.browsers.values());
+    this.browsers.clear();
+    await Promise.all(all.map(async (p) => (await p).close().catch(() => {})));
+  }
 }
 
 /**

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { createServer } from './server.js';
+import { createReplayServer } from './server.js';
 
 /**
  * stdio entry point. Nothing may be written to stdout except protocol frames,
@@ -11,6 +11,13 @@ import { createServer } from './server.js';
  * which is wrong whenever the repros are kept outside the project being fixed.
  */
 const root = process.env.REPLAY_ROOT ?? process.cwd();
-const server = createServer(root);
+const { server, dispose } = createReplayServer(root);
 await server.connect(new StdioServerTransport());
+
+// The pooled browsers outlive individual calls, so they need an explicit exit.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) {
+  process.once(signal, () => {
+    void dispose().finally(() => process.exit(0));
+  });
+}
 process.stderr.write(`replay mcp server ready (repros: ${root})\n`);

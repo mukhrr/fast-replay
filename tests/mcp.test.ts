@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createServer, record } from '../src/api.js';
+import { createReplayServer, record } from '../src/api.js';
 import { startDemoServer, type DemoServer } from './helpers/demo-server.js';
 import { demoBugFlow } from './helpers/flow.js';
 
@@ -23,6 +23,7 @@ interface ToolResult {
 let server: DemoServer;
 let root: string;
 let client: Client;
+let replay: ReturnType<typeof createReplayServer>;
 
 beforeAll(async () => {
   server = await startDemoServer(5240);
@@ -38,13 +39,12 @@ beforeAll(async () => {
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   client = new Client({ name: 'test-agent', version: '1.0.0' });
-  await Promise.all([
-    createServer(root).connect(serverTransport),
-    client.connect(clientTransport),
-  ]);
+  replay = createReplayServer(root);
+  await Promise.all([replay.server.connect(serverTransport), client.connect(clientTransport)]);
 }, 120_000);
 
 afterAll(async () => {
+  await replay?.dispose();
   await client?.close();
   await server?.close();
   if (root) await rm(root, { recursive: true, force: true });

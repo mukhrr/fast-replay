@@ -29,7 +29,11 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "stress": "tsx scripts/stress.ts",
-    "demo": "npm --prefix examples/demo-app run dev"
+    "demo": "npm --prefix examples/demo-app run dev",
+    "build:agent": "tsx scripts/build-agent.ts",
+    "prebuild": "npm run build:agent",
+    "pretest": "npm run build:agent",
+    "prestress": "npm run build:agent"
   },
   "dependencies": {
     "commander": "^15.0.0",
@@ -38,6 +42,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
+    "esbuild": "^0.28.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10"

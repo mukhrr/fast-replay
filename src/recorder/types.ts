@@ -1,0 +1,73 @@
+import type { Action, Author } from '../ir/schema.js';
+
+/** Selector + semantic info resolved in the page, while the element is still live. */
+export interface CapturedTarget {
+  candidates: string[];
+  semantic: string;
+}
+
+/** A user action, as captured in the page. */
+export interface RawActionEvent {
+  kind: 'action';
+  action: Action;
+  value: string | null;
+  target: CapturedTarget | null;
+  /** Date.now() at capture time. */
+  t: number;
+  author: Author;
+}
+
+/** A batch of DOM changes summarized as selectors that appeared or disappeared. */
+export interface RawDomEvent {
+  kind: 'dom';
+  appeared: string[];
+  gone: string[];
+  t: number;
+}
+
+export type PageEvent = RawActionEvent | RawDomEvent;
+
+export interface RawNavigationEvent {
+  kind: 'navigation';
+  url: string;
+  t: number;
+}
+
+export interface RawNetworkEvent {
+  kind: 'network';
+  method: string;
+  url: string;
+  /** When the request was issued. */
+  startedAt: number;
+  /** When it settled (response or failure). Null while still in flight. */
+  settledAt: number | null;
+  status: number | null;
+  failed: boolean;
+}
+
+export interface RawConsoleEvent {
+  kind: 'console';
+  text: string;
+  t: number;
+}
+
+export type RawEvent =
+  | RawActionEvent
+  | RawDomEvent
+  | RawNavigationEvent
+  | RawNetworkEvent
+  | RawConsoleEvent;
+
+/** Everything a recording session collected, in capture order per channel. */
+export interface RecordingTrace {
+  actions: RawActionEvent[];
+  dom: RawDomEvent[];
+  navigations: RawNavigationEvent[];
+  network: RawNetworkEvent[];
+  console: RawConsoleEvent[];
+  startedAt: number;
+  endedAt: number;
+  baseUrl: string;
+  startPath: string;
+  viewport: { width: number; height: number };
+}

@@ -52,7 +52,20 @@ repro record sensor-delete-crash --url http://localhost:3000 --path /sensors
 | `--viewport <WxH>` | `1440x900` | browser viewport |
 | `--storage-state <file>` | — | seed cookies/localStorage from a Playwright state file, for apps behind a login |
 
-Session state (cookies + localStorage) is snapshotted at the **start** of the recording into `.repros/<name>/state.json`, so replay begins from the same session you recorded from.
+### Getting past a login
+
+Session state is snapshotted at the **start** of recording into `.repros/<name>/state.json`, so replay begins from the session you recorded from. It includes **IndexedDB**, which matters more than it sounds: offline-first apps (Onyx, Dexie, Firebase Auth) keep their tokens there and touch neither cookies nor localStorage, so a snapshot without it restores nothing.
+
+Two ways in, and they solve different problems:
+
+| | `--storage-state <file>` | `--profile <dir>` |
+|---|---|---|
+| What it is | portable JSON snapshot | a real Chromium profile directory |
+| Isolation | every run starts identical | state accumulates across runs |
+| Survives | cookies, localStorage, IndexedDB | all of that, plus service workers and caches |
+| Also fixes | — | non-idempotent signup, slow cold boot |
+
+Prefer `--storage-state` for repeatable verification. Reach for `--profile` when the app's auth can't be captured any other way, or when signing up twice isn't possible — with a profile you never sign in again.
 
 ### `repro run <name>`
 

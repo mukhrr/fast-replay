@@ -10,7 +10,22 @@ import { clean, escAttr, escId, isStableClass, isStableToken, renderedText } fro
  * can name a node that is already detached by the time we report it.
  */
 
-const TEST_ID_ATTRS = ['data-testid', 'data-test', 'data-test-id', 'data-cy'];
+/**
+ * Attributes an app deliberately puts on an element to identify it. Ordered by
+ * how conventional they are.
+ *
+ * `data-sentry-label` is here because real apps label elements for telemetry
+ * far more consistently than they add test ids — Expensify labels nearly every
+ * interactive element that way, and those labels are as stable as a test id.
+ */
+const TEST_ID_ATTRS = [
+  'data-testid',
+  'data-test',
+  'data-test-id',
+  'data-cy',
+  'data-sentry-label',
+  'data-testid-label',
+];
 const MAX_CANDIDATES = 5;
 const MAX_CSS_PATH_DEPTH = 6;
 

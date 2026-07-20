@@ -134,6 +134,48 @@ describe('record → run round trip', () => {
     expect(summary.semantic).toContain('Delete Sensor 2');
   });
 
+  it('actually evaluates a hand-edited finalState assertion', async () => {
+    // The bug this guards: finalState.domAppeared was compiler-populated,
+    // schema-validated, documented as THE assertion seam — and never read.
+    // A hand-edited assertion returned green without being checked, which is a
+    // silent wrong answer, the worst thing a verification tool can do.
+    await recordDemoFlow('demo-assert');
+    await server.reset();
+
+    const paths = reproPaths('demo-assert', root);
+    const repro = await readRepro('demo-assert', root);
+    repro.assertion.finalState.domAppeared = ['[data-testid="this-never-exists"]'];
+    await writeFile(paths.ir, JSON.stringify(repro, null, 2));
+
+    const result = await run({ name: 'demo-assert', root });
+
+    expect(result.passed, 'an unsatisfiable finalState must fail the run').toBe(false);
+    expect(result.failure?.semantic).toBe('final state assertion');
+    expect(result.failure?.observed).toContain('this-never-exists');
+  });
+
+  it('keeps the partial IR when the driver throws mid-flow', async () => {
+    // A driver that fails on step 12 still captured eleven real steps. On a slow
+    // app that is minutes of work, and discarding it silently wasted the run.
+    await server.reset();
+    const failing = async (page: Parameters<typeof demoBugFlow>[0]) => {
+      await page.waitForSelector('[data-testid="sensor-row-1"]');
+      await page.fill('[data-testid="sensor-name-input"]', 'Boiler inlet');
+      await page.click('[data-testid="add-sensor"]');
+      await page.waitForSelector('[data-testid="sensor-row-4"]');
+      await page.click('[data-testid="does-not-exist"]', { timeout: 2_000 });
+    };
+
+    await expect(
+      record({ name: 'demo-partial', baseUrl: server.baseUrl, root, headless: true, drive: failing }),
+    ).rejects.toThrow(/stopped early/);
+
+    // The steps before the failure survived.
+    const partial = await readRepro('demo-partial', root);
+    expect(partial.steps.length).toBeGreaterThanOrEqual(2);
+    expect(partial.steps.some((s) => s.action === 'fill')).toBe(true);
+  });
+
   it('surfaces a hand-corrupted IR as a schema error, not a crash', async () => {
     await recordDemoFlow('demo-corrupt');
     const paths = reproPaths('demo-corrupt', root);

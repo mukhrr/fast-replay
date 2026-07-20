@@ -138,6 +138,44 @@ export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
 }
 
 /**
+ * Console noise that is a property of the environment, not of the app's bug.
+ *
+ * A production SPA logs these constantly — blocked third-party beacons, CORS
+ * preflights, DNS failures, extension chatter. Recording them as the bug's
+ * signature makes `--expect-fixed` report "bug still present" forever, so an
+ * agent in a fix loop keeps editing code that was already correct. A tool that
+ * cries wolf permanently is worse than one with no check at all.
+ */
+const AMBIENT_ERROR_PATTERNS = [
+  /blocked by CORS policy/i,
+  /Access-Control-Allow-Origin/i,
+  /net::ERR_/i,
+  /ERR_NAME_NOT_RESOLVED/i,
+  /Failed to load resource/i,
+  /chrome-extension:/i,
+  /Content Security Policy/i,
+  /favicon/i,
+  /ResizeObserver loop/i,
+  /Download the React DevTools/i,
+];
+
+/**
+ * Console errors plausibly caused by the recorded flow.
+ *
+ * Two filters. Ambient patterns are dropped outright. Anything logged before
+ * the first user action is dropped too: it happened during boot, so it happens
+ * on every run regardless of what the flow does, which makes it useless as a
+ * signature for this particular bug.
+ */
+function bugSignatureErrors(trace: RecordingTrace): string[] {
+  const firstAction = trace.actions[0]?.t ?? trace.startedAt;
+  return trace.console
+    .filter((c) => c.t >= firstAction)
+    .map((c) => c.text)
+    .filter((text) => !AMBIENT_ERROR_PATTERNS.some((re) => re.test(text)));
+}
+
+/**
  * Phase 0's assertion is whatever the recording ended in. Because a repro
  * captures the BUG, an invariant that the recording itself violated is not a
  * usable check — it would make a fresh repro fail its own replay. Those get
@@ -154,7 +192,7 @@ export function deriveAssertion(steps: Step[], trace: RecordingTrace): Assertion
     if (last.waitAfter.network?.length) finalState.network = last.waitAfter.network;
   }
 
-  const consoleErrors = Array.from(new Set(trace.console.map((c) => c.text)));
+  const consoleErrors = Array.from(new Set(bugSignatureErrors(trace)));
 
   // Third-party failures are not this app's bug and must not disable the check.
   const failedRequests = trace.network

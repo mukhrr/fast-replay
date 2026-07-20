@@ -15,10 +15,40 @@ const INTERESTING = '[data-testid], [data-test], [data-test-id], [data-cy], [id]
 
 const OBSERVED_ATTRS = ['class', 'style', 'hidden', 'aria-hidden'];
 
+/**
+ * Longest an appearance waits for confirmation before being recorded.
+ *
+ * On a busy React app most DOM churn after an action is unrelated to it —
+ * portals, context menus, tooltips and virtualised rows mount and unmount
+ * constantly. Recording all of it produces waits the app will never satisfy,
+ * and the replay then fails on a perfectly healthy build.
+ *
+ * The confirmation also flushes early, the moment the next action is captured,
+ * because that is exactly when replay stops waiting and moves on. Confirming on
+ * a fixed timer alone would discard real signals in a fast or agent-driven
+ * flow, where the next action lands well inside this window.
+ *
+ * `gone` needs no such check: a removed node stays removed.
+ */
+const APPEAR_CONFIRM_MS = 600;
+
 export interface DomReactionContext {
   config: AgentConfig;
   transport: Transport;
   reveals: RevealTracker;
+}
+
+export interface DomReactionHandle {
+  /** Confirm and emit any pending appearances now. */
+  flushAppearances(): void;
+}
+
+/** Playwright selector -> something document.querySelector can evaluate. */
+function toCssSelector(selector: string): string {
+  if (selector.startsWith('role=') || selector.startsWith('text=')) {
+    throw new Error('not a CSS selector');
+  }
+  return selector;
 }
 
 function harvest(
@@ -47,9 +77,42 @@ function harvest(
   }
 }
 
-export function observeDomReactions(ctx: DomReactionContext): void {
+export function observeDomReactions(ctx: DomReactionContext): DomReactionHandle {
   const { config, transport, reveals } = ctx;
   const visibility = new WeakMap<Element, boolean>();
+
+  /** Appearances awaiting confirmation, keyed by their original timestamp. */
+  let pending: { selectors: string[]; at: number; timer: ReturnType<typeof setTimeout> }[] = [];
+
+  const stillVisible = (sel: string): boolean => {
+    try {
+      const el = document.querySelector(toCssSelector(sel));
+      return el ? isVisible(el) : false;
+    } catch {
+      // role=/text= selectors are not queryable here. Keep them: they came from
+      // a high-priority path, and dropping one on a syntax technicality would
+      // lose real signal.
+      return true;
+    }
+  };
+
+  const confirm = (entry: { selectors: string[]; at: number }): void => {
+    const survived = entry.selectors.filter(stillVisible);
+    // Carries the ORIGINAL timestamp so the compiler still attributes it to the
+    // action that caused it, not to the confirmation delay.
+    if (survived.length) {
+      transport.emit({ kind: 'dom', appeared: survived, gone: [], t: entry.at });
+    }
+  };
+
+  const flushAppearances = (): void => {
+    const due = pending;
+    pending = [];
+    for (const entry of due) {
+      clearTimeout(entry.timer);
+      confirm(entry);
+    }
+  };
 
   // Only rendered elements make usable appear-signals; see visibility.ts.
   const visibleAppearedSelector = (el: Element): string | null =>
@@ -90,13 +153,21 @@ export function observeDomReactions(ctx: DomReactionContext): void {
       const at = Date.now();
       reveals.noteRevealed(revealed, at);
 
-      if (appeared.size || gone.size) {
-        transport.emit({
-          kind: 'dom',
-          appeared: Array.from(appeared),
-          gone: Array.from(gone),
-          t: at,
-        });
+      // Emitted immediately — a removal is already final.
+      if (gone.size) {
+        transport.emit({ kind: 'dom', appeared: [], gone: Array.from(gone), t: at });
+      }
+
+      if (appeared.size) {
+        const entry = {
+          selectors: Array.from(appeared),
+          at,
+          timer: setTimeout(() => {
+            pending = pending.filter((e) => e !== entry);
+            confirm(entry);
+          }, APPEAR_CONFIRM_MS),
+        };
+        pending.push(entry);
       }
     });
 
@@ -111,4 +182,6 @@ export function observeDomReactions(ctx: DomReactionContext): void {
   // The init script can run before <html> exists.
   if (document.documentElement) start();
   else document.addEventListener('DOMContentLoaded', start, { once: true });
+
+  return { flushAppearances };
 }

@@ -36,6 +36,12 @@ export interface CaptureContext {
   config: AgentConfig;
   transport: Transport;
   reveals: RevealTracker;
+  /**
+   * Called just before each action is recorded, so the DOM observer can settle
+   * the previous action's reaction at the same moment replay would stop waiting
+   * for it.
+   */
+  beforeAction?: () => void;
 }
 
 function targetOf(e: Event): Element | null {
@@ -65,6 +71,7 @@ export function installCapture(ctx: CaptureContext): void {
   const committed = new WeakMap<Element, string>();
 
   function emitAction(action: Action, el: Element | null, value: string | null): void {
+    ctx.beforeAction?.();
     const target = el ? describe(el) : null;
     if (el && !target) return; // nothing addressable — a step we could never replay
     const t = Date.now();

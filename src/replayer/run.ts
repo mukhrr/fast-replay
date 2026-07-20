@@ -1,7 +1,8 @@
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
+import type { Page } from 'playwright';
+import { openBrowser } from '../browser.js';
 import type { Repro, Step, Target } from '../ir/schema.js';
 import { reproPaths, type ReproPaths } from '../ir/io.js';
 import { collectReactions } from '../recorder/reaction.js';
@@ -85,6 +86,8 @@ export interface RunOptions {
    * Phase 0 never supplies one.
    */
   onStepFailure?: (target: Target, page: Page) => Promise<string | null>;
+  /** Replay against a persistent Chromium profile (e.g. to reuse a login). */
+  profileDir?: string | null;
 }
 
 export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<RunResult> {
@@ -95,18 +98,16 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
   const notes: string[] = [];
   const startedAt = Date.now();
 
-  let browser: Browser | null = null;
-  let context: BrowserContext | null = null;
+  const opened = await openBrowser({
+    headless: !options.headed,
+    viewport: repro.viewport,
+    storageStatePath: options.profileDir ? null : storageStatePath(repro, root),
+    profileDir: options.profileDir ?? null,
+  });
 
   try {
-    browser = await chromium.launch({ headless: !options.headed });
-    context = await browser.newContext({
-      viewport: repro.viewport,
-      ...storageStateOption(repro, root),
-    });
-
+    const { context, page } = opened;
     const reactions = collectReactions(context);
-    const page = await context.newPage();
 
     await page.goto(new URL(repro.startPath, baseUrl).toString(), {
       waitUntil: 'domcontentloaded',
@@ -202,6 +203,31 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
       });
     }
 
+    // The final-state assertion. Auto-derived from the last step, but the whole
+    // point of a readable IR is that a human or an agent can widen it by hand —
+    // so it has to actually be evaluated. It previously was not: the fields were
+    // written by the compiler, validated by the schema, documented as the
+    // assertion seam, and silently ignored. A hand-edited assertion returned
+    // green without ever being checked, which is worse than not having it.
+    const finalOutcome = await waitForFinalState(
+      { page, baseUrl, network: reactions.network, since: stepStart },
+      repro,
+      expectFixed,
+    );
+    if (finalOutcome && !finalOutcome.ok) {
+      const last = repro.steps[repro.steps.length - 1];
+      return await fail(
+        { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes },
+        {
+          stepId: last?.id ?? 'assertion',
+          stepIndex: repro.steps.length - 1,
+          semantic: 'final state assertion',
+          expected: describeFinalState(repro),
+          observed: `these never arrived within ${FINAL_STATE_TIMEOUT_MS}ms:\n      ${finalOutcome.unmet.join('\n      ')}`,
+        },
+      );
+    }
+
     const finalScreenshot = options.captureFinalScreenshot
       ? await captureEndState(page, paths)
       : null;
@@ -265,16 +291,15 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
       invariantViolations: [],
     };
   } finally {
-    await context?.close().catch(() => {});
-    await browser?.close().catch(() => {});
+    await opened.close();
   }
 }
 
-function storageStateOption(repro: Repro, root: string): { storageState?: string } {
-  if (!repro.storageStatePath) return {};
+function storageStatePath(repro: Repro, root: string): string | null {
+  if (!repro.storageStatePath) return null;
   const abs = path.resolve(root, repro.storageStatePath);
   // A deleted state file should degrade to a clean session, not crash the run.
-  return existsSync(abs) ? { storageState: abs } : {};
+  return existsSync(abs) ? abs : null;
 }
 
 interface FailContext {
@@ -312,6 +337,40 @@ async function fail(
     failure: { ...failure, artifacts },
     invariantViolations: violations,
   };
+}
+
+/** Ceiling for the final-state assertion, independent of any step's budget. */
+const FINAL_STATE_TIMEOUT_MS = 5_000;
+
+/**
+ * Evaluate `assertion.finalState` after the last step.
+ *
+ * Skipped entirely under --expect-fixed: the recorded final state describes the
+ * BUG, and demanding it after a fix would fail every correct build.
+ */
+async function waitForFinalState(
+  ctx: Parameters<typeof waitForReaction>[0],
+  repro: Repro,
+  expectFixed: boolean,
+): Promise<{ ok: boolean; unmet: string[] } | null> {
+  if (expectFixed) return null;
+  const { domAppeared, domGone } = repro.assertion.finalState;
+  if (!domAppeared?.length && !domGone?.length) return null;
+
+  const outcome = await waitForReaction(ctx, {
+    ...(domAppeared?.length ? { domAppeared } : {}),
+    ...(domGone?.length ? { domGone } : {}),
+    timeoutMs: FINAL_STATE_TIMEOUT_MS,
+  });
+  return { ok: outcome.ok, unmet: outcome.unmet };
+}
+
+function describeFinalState(repro: Repro): string {
+  const { domAppeared, domGone } = repro.assertion.finalState;
+  return [
+    ...(domAppeared ?? []).map((s) => `${s} to be present`),
+    ...(domGone ?? []).map((s) => `${s} to be gone`),
+  ].join(', ');
 }
 
 /** End-of-run screenshot for a passing run; failures capture their own. */

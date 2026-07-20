@@ -20,8 +20,10 @@ export interface RecordOptions {
   startPath?: string;
   viewport?: { width: number; height: number };
   root?: string;
-  /** Seed cookies/localStorage from an existing Playwright storageState file. */
+  /** Seed cookies/localStorage/IndexedDB from an existing Playwright state file. */
   storageStatePath?: string | null;
+  /** Use a persistent Chromium profile instead of a fresh context. */
+  profileDir?: string | null;
   onReady?: () => void;
   headless?: boolean;
   /**
@@ -39,6 +41,24 @@ export interface RecordResult {
 }
 
 /**
+ * The driver failed part-way, but the steps captured before it did were written
+ * to disk anyway. Carries the path so the caller can inspect or resume.
+ */
+export class PartialRecordingError extends Error {
+  constructor(
+    override readonly cause: Error,
+    readonly irPath: string,
+    readonly repro: Repro,
+  ) {
+    super(
+      `Recording stopped early after ${repro.steps.length} step(s): ${cause.message}\n` +
+        `The partial repro was still written to ${irPath}`,
+    );
+    this.name = 'PartialRecordingError';
+  }
+}
+
+/**
  * Drive a real browser, capture the flow, compile it to IR on disk.
  *
  * This — not the CLI — is the product's entry point. `repro record` is a thin
@@ -49,11 +69,12 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
   const root = options.root ?? process.cwd();
   const paths = reproPaths(options.name, root);
 
-  const { trace, storageState, stopReason } = await launchRecording({
+  const { trace, storageState, stopReason, driveError } = await launchRecording({
     baseUrl: options.baseUrl,
     startPath: options.startPath,
     viewport: options.viewport,
     storageStatePath: options.storageStatePath ?? null,
+    profileDir: options.profileDir ?? null,
     onReady: options.onReady,
     headless: options.headless,
     drive: options.drive,
@@ -66,7 +87,11 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
     storageStatePath: path.relative(root, paths.storageState),
   });
 
+  // Written before any error is raised: a driver that failed on step 12 still
+  // captured eleven real steps, and throwing them away wastes the whole run.
   await writeRepro(repro, paths);
+
+  if (driveError) throw new PartialRecordingError(driveError, paths.ir, repro);
   return { repro, irPath: paths.ir, stopReason };
 }
 

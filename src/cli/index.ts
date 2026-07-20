@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { Command } from 'commander';
-import { list, record, run, STOP_HOTKEY } from '../api.js';
+import { list, PartialRecordingError, record, run, STOP_HOTKEY } from '../api.js';
 import { IRValidationError } from '../ir/schema.js';
 import type { RunResult } from '../replayer/run.js';
 import { age, bold, cyan, dim, green, ms, red, table, truncate, yellow } from './format.js';
@@ -19,7 +19,8 @@ program
   .requiredOption('-u, --url <baseUrl>', 'base URL of your dev server, e.g. http://localhost:3000')
   .option('-p, --path <startPath>', 'path to start recording at', '/')
   .option('--viewport <WxH>', 'browser viewport', '1440x900')
-  .option('--storage-state <file>', 'seed cookies/localStorage from a Playwright state file')
+  .option('--storage-state <file>', 'seed cookies/localStorage/IndexedDB from a Playwright state file')
+  .option('--profile <dir>', 'record against a persistent Chromium profile (reuses a login)')
   .description('launch an instrumented browser and record a bug reproduction')
   .action(async (name: string, opts) => {
     const viewport = parseViewport(opts.viewport);
@@ -30,6 +31,7 @@ program
       startPath: opts.path,
       viewport,
       storageStatePath: opts.storageState ?? null,
+      profileDir: opts.profile ?? null,
       onReady: () => {
         console.log(`${green('●')} ${bold('Recording')} ${cyan(name)} on ${opts.url}${opts.path}`);
         console.log(dim(`  Reproduce the bug, then press ${STOP_HOTKEY} — or just close the browser.`));
@@ -72,13 +74,26 @@ program
   .option('--headed', 'watch the replay in a visible browser', false)
   .option('--expect-fixed', 'pass when the bug no longer happens — use while fixing', false)
   .option('-u, --url <baseUrl>', 'override the recorded base URL')
+  .option('--profile <dir>', 'replay against a persistent Chromium profile (reuses a login)')
+  .option(
+    '--resolve-timeout <ms>',
+    'budget for the first selector candidate; raise it for slow-booting SPAs',
+    '800',
+  )
   .description('replay a repro at machine speed and assert the recorded outcome')
   .action(async (name: string, opts) => {
+    const first = Number(opts.resolveTimeout);
+    if (!Number.isFinite(first) || first <= 0) {
+      throw new Error(`Invalid --resolve-timeout "${opts.resolveTimeout}". Expected milliseconds.`);
+    }
     const result = await run({
       name,
       headed: opts.headed,
       baseUrl: opts.url,
       expectFixed: opts.expectFixed,
+      profileDir: opts.profile ?? null,
+      // Fallbacks stay cheap probes: half the primary budget.
+      resolveTimeouts: { first, subsequent: Math.max(200, Math.round(first / 2)) },
     });
     result.passed ? reportPass(result) : reportFail(result);
     process.exitCode = result.passed ? 0 : 1;
@@ -172,6 +187,13 @@ async function main(): Promise<void> {
   try {
     await program.parseAsync(process.argv);
   } catch (err) {
+    if (err instanceof PartialRecordingError) {
+      // The steps captured before the failure are on disk and worth having.
+      console.error(`${yellow('!')} ${err.message}`);
+      console.error(dim(`  Inspect it, trim the last step, and re-run — or re-record.`));
+      process.exitCode = 1;
+      return;
+    }
     if (err instanceof IRValidationError) {
       // Schema errors are the user's to fix by hand — show every issue at once.
       console.error(red('✗ Invalid repro file'));

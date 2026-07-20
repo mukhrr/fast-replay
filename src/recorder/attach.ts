@@ -3,6 +3,7 @@ import {
   AGENT_READY_FLAG,
   agentSource,
   DEFAULT_AGENT_CONFIG,
+  FLUSH_GLOBAL,
   type AgentConfig,
 } from './instrument.js';
 import { collectReactions, type ReactionCollector } from './reaction.js';
@@ -14,7 +15,13 @@ import type {
   RecordingTrace,
 } from './types.js';
 
-export type StopReason = 'hotkey' | 'browser-closed' | 'signal' | 'programmatic';
+export type StopReason =
+  | 'hotkey'
+  | 'browser-closed'
+  | 'signal'
+  | 'programmatic'
+  /** The programmatic driver threw; the trace up to that point is kept. */
+  | 'drive-failed';
 
 export interface AttachOptions {
   baseUrl: string;
@@ -155,6 +162,24 @@ export async function verifyInstrumentation(page: Page): Promise<void> {
     'Recorder instrumentation failed to install in the page. No actions would be captured.\n' +
       'This usually means the injected agent threw — check the browser console for the first error.',
   );
+}
+
+/**
+ * Settle the final action's reaction before teardown.
+ *
+ * The last action has no successor to close its reaction window, so without
+ * this its DOM signals are lost to a confirmation timer that fires after the
+ * recorder has already detached — which silently empties the assertion.
+ */
+export async function flushPageReactions(page: Page): Promise<void> {
+  try {
+    await page.evaluate((flag) => {
+      const fn = (window as unknown as Record<string, unknown>)[flag];
+      if (typeof fn === 'function') (fn as () => void)();
+    }, FLUSH_GLOBAL);
+  } catch {
+    // Page already gone (browser closed to stop recording); nothing to settle.
+  }
 }
 
 /** Path + query relative to baseUrl, defaulting to "/" for anything unparseable. */

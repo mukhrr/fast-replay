@@ -4,6 +4,7 @@ import { INSTALL_GLOBAL, type AgentConfig } from './agent/config.js';
 export {
   AGENT_READY_FLAG,
   DEFAULT_AGENT_CONFIG,
+  FLUSH_GLOBAL,
   INSTALL_GLOBAL,
   type AgentConfig,
 } from './agent/config.js';

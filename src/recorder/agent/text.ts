@@ -30,6 +30,10 @@ export function isStableToken(t: string): boolean {
   if (/[0-9a-f]{6,}/i.test(t)) return false; // embedded hash
   if ((t.match(/\d/g) || []).length >= 3) return false; // numeric noise
   if (/[A-Z]/.test(t) && /\d/.test(t)) return false; // e.g. Button_root__2Xy4z
+  // Atomic-CSS hashes: a 1-2 char namespace then an opaque blob. React Native
+  // Web emits these (r-1awozwy, r-1mdbw0j) and they change whenever styling
+  // does, so a CSS path built from them breaks on the next restyle.
+  if (/^[a-z]{1,2}-[a-z0-9]{5,}$/i.test(t) && /\d/.test(t)) return false;
   return true;
 }
 

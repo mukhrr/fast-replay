@@ -1,5 +1,5 @@
 import { installCapture } from './capture.js';
-import { AGENT_READY_FLAG, type AgentConfig } from './config.js';
+import { AGENT_READY_FLAG, FLUSH_GLOBAL, type AgentConfig } from './config.js';
 import { observeDomReactions } from './dom-reaction.js';
 import { createRevealTracker } from './reveal-tracker.js';
 import { createTransport } from './transport.js';
@@ -27,8 +27,14 @@ export function pageAgent(config: AgentConfig): void {
   // listeners report hovers and actions, and this decides when a hover mattered.
   const reveals = createRevealTracker(config);
 
-  observeDomReactions({ config, transport, reveals });
-  installCapture({ config, transport, reveals });
+  const dom = observeDomReactions({ config, transport, reveals });
+  // An action closes the previous action's reaction window, so pending
+  // appearances are confirmed at exactly the point replay would give up on them.
+  installCapture({ config, transport, reveals, beforeAction: () => dom.flushAppearances() });
+
+  // The last action has no successor to close its window, so the host settles
+  // it explicitly at teardown.
+  globals[FLUSH_GLOBAL] = () => dom.flushAppearances();
 
   // Last line on purpose: reaching it proves every listener above installed.
   // A recording that silently captures nothing is the worst failure this tool

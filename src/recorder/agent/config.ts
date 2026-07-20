@@ -28,3 +28,10 @@ export const INSTALL_GLOBAL = '__replayInstall';
 
 /** Set once every listener is installed; see `verifyInstrumentation`. */
 export const AGENT_READY_FLAG = '__replayAgentReady';
+
+/**
+ * Settles any pending DOM reaction immediately. The host calls this when the
+ * recording stops, so the final action's reaction is not lost to a confirmation
+ * timer that would have fired after teardown.
+ */
+export const FLUSH_GLOBAL = '__replayFlush';

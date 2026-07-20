@@ -1,7 +1,7 @@
 {
   "name": "replay-repro",
   "version": "0.1.0",
-  "description": "Record a bug once, verify the fix in seconds.",
+  "description": "Record a browser bug once, verify the fix in seconds. A deterministic eye for coding agents.",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -48,5 +48,28 @@
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^4.1.10"
-  }
+  },
+  "author": "Mukhriddin Shakhriyorov",
+  "keywords": [
+    "bug",
+    "repro",
+    "reproduction",
+    "playwright",
+    "mcp",
+    "testing",
+    "debugging",
+    "browser",
+    "automation",
+    "claude",
+    "agent",
+    "ai"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mukhrr/replay.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mukhrr/replay/issues"
+  },
+  "homepage": "https://github.com/mukhrr/replay#readme"
 }

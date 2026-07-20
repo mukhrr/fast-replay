@@ -1,5 +1,7 @@
 node_modules/
 dist/
 .repros/
+.playwright-mcp/
 *.tsbuildinfo
+*.tgz
 .DS_Store

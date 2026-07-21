@@ -181,6 +181,41 @@ describe('candidate generation', () => {
     expect(candidates[0]).toBe('[data-sentry-label="SignIn-Continue"]');
   });
 
+  it('prefers visible text to a path that is unique only by position', async () => {
+    // `div:nth-of-type(3) > span:nth-of-type(2)` breaks the moment a row is
+    // inserted or reordered above it, which on a nav list is routine. The text
+    // is not durable either, but it survives a reshuffle.
+    const candidates = await ask(
+      `<nav>
+         <div><span>x</span><span>24U</span></div>
+         <div><span>x</span><span>42U</span></div>
+       </nav>`,
+      'div:nth-of-type(2) span:nth-of-type(2)',
+      'buildCandidates',
+    );
+    const text = candidates.findIndex((c) => c.startsWith('text='));
+    const positional = candidates.findIndex((c) => c.includes(':nth-of-type('));
+    expect(text, 'a text anchor should be offered').toBeGreaterThanOrEqual(0);
+    expect(positional, 'the positional path should still be kept').toBeGreaterThanOrEqual(0);
+    expect(text).toBeLessThan(positional);
+  });
+
+  it('keeps a class-anchored path ahead of text', async () => {
+    // A stable class carries real identity; position does not.
+    const candidates = await ask(
+      `<main>
+         <p><span>other</span></p>
+         <div class="sensor-row"><span>42U</span></div>
+       </main>`,
+      '.sensor-row span',
+      'buildCandidates',
+    );
+    const css = candidates.findIndex((c) => c.includes('div.sensor-row'));
+    const text = candidates.findIndex((c) => c.startsWith('text='));
+    expect(css).toBeGreaterThanOrEqual(0);
+    if (text >= 0) expect(css).toBeLessThan(text);
+  });
+
   it('anchors a CSS path on the nearest test id ancestor', async () => {
     // Two structurally identical rows, so the path stays ambiguous until it
     // reaches something addressable.

@@ -153,15 +153,36 @@ export function buildCandidates(el: Element): string[] {
   // of a labelled control, `[data-testid="x"]` is strictly more durable than
   // `[data-testid="x"] > span` or a chain of :nth-of-type positions.
   push(labelledAncestorSelector(el));
-  push(buildCssPath(el));
 
+  const cssPath = buildCssPath(el);
   const text = ownText(el);
-  if (text && isSmallestWithText(el, text)) {
-    const matches = allElements().filter((c) => isSmallestWithText(c, text));
-    push(withNth(`text="${escAttr(text)}"`, el, matches));
+  const textSelector =
+    text && isSmallestWithText(el, text)
+      ? withNth(`text="${escAttr(text)}"`, el, allElements().filter((c) => isSmallestWithText(c, text)))
+      : null;
+
+  // A path that is unique only by sibling position breaks the moment anything
+  // is inserted, reordered or conditionally rendered above it — which on a list
+  // or a nav is routine. Visible text is not durable either, but it survives a
+  // reshuffle, so it goes first when the path has nothing but position to
+  // offer. A path anchored on an attribute or a stable class still wins.
+  if (isPositionalOnly(cssPath)) {
+    push(textSelector);
+    push(cssPath);
+  } else {
+    push(cssPath);
+    push(textSelector);
   }
 
   return out.slice(0, MAX_CANDIDATES);
+}
+
+/** True when the selector's uniqueness rests entirely on :nth-of-type. */
+function isPositionalOnly(selector: string | null): boolean {
+  if (!selector) return false;
+  if (!selector.includes(':nth-of-type(')) return false;
+  // An attribute anchor or a surviving class name carries real identity.
+  return !selector.includes('[') && !selector.includes('.');
 }
 
 /**

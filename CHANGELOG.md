@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.2 — unreleased
+
+- **A CSS path unique only by sibling position now ranks below the text anchor.** `div:nth-of-type(3) > span:nth-of-type(2)` breaks the moment anything is inserted or reordered above it, which on a list or nav is routine; visible text is not durable either, but it survives a reshuffle. A path anchored on an attribute or a stable class still wins.
+
+**0.2.1 validated in `pdu_html`:** clicks issued 6/6 recorded on a real Radix `DismissableLayer` (the same retarget-to-`<html>` trace that used to drop the gesture), **zero hand-edits** to first replay, and all four verdicts flipping correctly — the first time that test has run to completion. Console classification identical across a fast-start and a slow-start recording.
+
 ## 0.2.1 — unreleased
 
 Third round in `pdu_html`. The 0.2.0 click fix targeted the wrong mechanism; the real one was found from an event trace.

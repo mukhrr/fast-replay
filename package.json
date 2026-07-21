@@ -1,6 +1,6 @@
 {
   "name": "replay-repro",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Record a browser bug once, verify the fix in seconds. A deterministic eye for coding agents.",
   "type": "module",
   "license": "MIT",

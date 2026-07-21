@@ -1,6 +1,8 @@
 # Changelog
 
-## 0.2.2 — unreleased
+## 0.2.2 — 2026-07-21
+
+First published release. Versions below were developed but never published.
 
 - **A CSS path unique only by sibling position now ranks below the text anchor.** `div:nth-of-type(3) > span:nth-of-type(2)` breaks the moment anything is inserted or reordered above it, which on a list or nav is routine; visible text is not durable either, but it survives a reshuffle. A path anchored on an attribute or a stable class still wins.
 

@@ -17,7 +17,8 @@
     ".": {
       "types": "./dist/api.d.ts",
       "import": "./dist/api.js"
-    }
+    },
+    "./package.json": "./package.json"
   },
   "files": [
     "dist",

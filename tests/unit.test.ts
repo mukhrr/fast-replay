@@ -24,6 +24,7 @@ function trace(over: Partial<RecordingTrace> = {}): RecordingTrace {
     dom: [],
     navigations: [],
     focus: [],
+    presentAtEnd: [],
     documentLoads: [],
     network: [],
     console: [],
@@ -154,10 +155,12 @@ describe('buildWaitAfter', () => {
     });
     const slow = buildWaitAfter({
       actionAt: 1_000,
-      windowEnd: 9_000,
+      windowEnd: 20_000,
       baseUrl: BASE,
       dom: [],
-      network: [net({ settledAt: 2_500 })],
+      // Well clear of the floor, which is deliberately generous so a repro
+      // recorded on a warm build survives replay against a cold one.
+      network: [net({ settledAt: 8_000 })],
     });
     expect(fast.timeoutMs).toBe(DEFAULT_WAIT_RULES.minTimeoutMs);
     expect(slow.timeoutMs).toBeGreaterThan(fast.timeoutMs);

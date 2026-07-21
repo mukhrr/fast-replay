@@ -26,6 +26,16 @@ const AMBIENT_CONSOLE_PATTERNS = [
   /favicon/i,
   /ResizeObserver loop/i,
   /Download the React DevTools/i,
+  // Development builds narrate; production builds do not. A repro recorded
+  // against a minified deploy and replayed against a dev server would fail on
+  // warnings that say nothing about the bug.
+  /^Warning:/i,
+  /validateDOMNesting/i,
+  /cannot appear as a descendant of/i,
+  /Each child in a list should have a unique "key"/i,
+  /hydrat/i,
+  /is deprecated and will be removed/i,
+  /React does not recognize the .* prop/i,
 ];
 
 export function isAmbientConsoleError(text: string): boolean {

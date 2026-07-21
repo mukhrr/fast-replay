@@ -5,7 +5,7 @@ import {
   type Repro,
   type Step,
 } from '../ir/schema.js';
-import type { RawActionEvent, RecordingTrace } from '../recorder/types.js';
+import type { RawActionEvent, RawNetworkEvent, RecordingTrace } from '../recorder/types.js';
 import { isAmbientConsoleError, isIncidentalRequest } from '../noise.js';
 import { isSameOrigin, normalizeUrlPattern } from './normalize.js';
 import { buildWaitAfter, DEFAULT_WAIT_RULES, type WaitRules } from './waits.js';
@@ -149,6 +149,8 @@ export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
   );
   const traceEnd = trace.endedAt || Date.now();
 
+  const ambientPatterns = ambientRequestPatterns(trace, rules);
+
   const steps: Step[] = merged.map((action, index) => {
     const next = merged[index + 1];
     const windowEnd = next ? next.t : traceEnd;
@@ -164,6 +166,7 @@ export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
           network: trace.network,
           dom: trace.dom,
           baseUrl: trace.baseUrl,
+          ambientPatterns,
         },
         rules,
       ),
@@ -197,6 +200,34 @@ export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
 
 /** An error is the flow's evidence only if it landed in some action's wake. */
 const REACTION_WINDOW_MS = 3_000;
+
+/**
+ * Endpoints the app calls on its own schedule.
+ *
+ * A keepalive or a poll fires whether or not anyone clicked, so it is never
+ * evidence that a click caused anything — but it lives on the app's own API
+ * host, which is exactly where host-based rules cannot reach. The tell is the
+ * same one used for console output: it also happens when nothing was happening.
+ */
+function ambientRequestPatterns(trace: RecordingTrace, rules: WaitRules): Set<string> {
+  const ambient = new Set<string>();
+  if (!trace.actions.length) return ambient;
+
+  const causedBySomeAction = (n: RawNetworkEvent): boolean =>
+    trace.actions.some((a) => n.startedAt >= a.t && n.startedAt <= a.t + rules.triggerWindowMs);
+
+  const unprompted = new Set<string>();
+  const prompted = new Set<string>();
+  for (const n of trace.network) {
+    const key = `${n.method} ${normalizeUrlPattern(n.url, trace.baseUrl)}`;
+    (causedBySomeAction(n) ? prompted : unprompted).add(key);
+  }
+  // Firing unprompted at any point is disqualifying, even if it also fired
+  // after a click — a poll that happens to land in a window is still a poll.
+  for (const key of unprompted) if (prompted.has(key)) ambient.add(key);
+  for (const key of unprompted) ambient.add(key);
+  return ambient;
+}
 
 interface ConsoleSplit {
   /** Errors plausibly caused by something the user did. */
@@ -283,9 +314,16 @@ export function deriveAssertion(steps: Step[], trace: RecordingTrace): Assertion
 
   const finalState: FinalState = {};
   if (last) {
-    if (last.waitAfter.domAppeared?.length) finalState.domAppeared = last.waitAfter.domAppeared;
+    // Only what was still on screen when the recording stopped. A transition
+    // the flow passed through is not the state it left behind, and asserting
+    // one made a fresh repro fail its own replay.
+    const survived = (last.waitAfter.domAppeared ?? []).filter((s) =>
+      trace.presentAtEnd.includes(s),
+    );
+    if (survived.length) finalState.domAppeared = survived;
     if (last.waitAfter.domGone?.length) finalState.domGone = last.waitAfter.domGone;
     if (last.waitAfter.network?.length) finalState.network = last.waitAfter.network;
+    // Focus is deliberately NOT auto-asserted here; see `Step.focusedAfter`.
   }
 
   const { signature: consoleErrors, ambient: ambientConsoleErrors } = splitConsole(trace);

@@ -1,8 +1,19 @@
 #!/usr/bin/env node
 import path from 'node:path';
 import { Command } from 'commander';
-import { list, PartialRecordingError, record, run, STOP_HOTKEY } from '../api.js';
-import { IRValidationError } from '../ir/schema.js';
+import {
+  assertRepro,
+  fixRepro,
+  list,
+  PartialRecordingError,
+  readRepro,
+  record,
+  reproPaths,
+  run,
+  STOP_HOTKEY,
+} from '../api.js';
+import { writeRepro } from '../ir/io.js';
+import { IRValidationError, type Repro } from '../ir/schema.js';
 import type { RunResult } from '../replayer/run.js';
 import { age, bold, cyan, dim, green, ms, red, table, truncate, yellow } from './format.js';
 import { VERSION } from '../version.js';
@@ -141,6 +152,66 @@ program
     console.log(table(rows));
   });
 
+const collect = (value: string, previous: string[] = []): string[] => [...previous, value];
+
+program
+  .command('fix')
+  .argument('<name>', 'name of the repro to repair')
+  .description('repair a recorded repro without hand-editing its JSON')
+  .option('--scale-timeouts <n>', 'multiply every recorded timeout')
+  .option('--min-timeout <ms>', 'raise any timeout below this floor')
+  .option('--relax-network', 'drop network waits, keeping DOM signals', false)
+  .option('--relax-invariants', 'turn off noConsoleErrors and noFailedRequests', false)
+  .option('--drop-wait <selector>', 'remove a selector from every wait', collect)
+  .option('--drop-step <id>', 'remove a step', collect)
+  .option('--add-candidate <stepId=selector>', 'add a selector candidate to a step', collect)
+  .option('--renumber', 'renumber step ids to match position', false)
+  .action(async (name: string, opts) => {
+    const repro = await readRepro(name);
+    const { repro: fixed, changes } = fixRepro(repro, {
+      scaleTimeouts: opts.scaleTimeouts ? Number(opts.scaleTimeouts) : undefined,
+      minTimeout: opts.minTimeout ? Number(opts.minTimeout) : undefined,
+      relaxNetwork: opts.relaxNetwork,
+      relaxInvariants: opts.relaxInvariants,
+      dropWaits: opts.dropWait,
+      dropSteps: opts.dropStep,
+      addCandidates: opts.addCandidate,
+      renumber: opts.renumber,
+    });
+    await applyEdit(name, fixed, changes);
+  });
+
+program
+  .command('assert')
+  .argument('<name>', 'name of the repro')
+  .description('state what must be true, without hand-editing its JSON')
+  .option('--appeared <selector>', 'require this to be present at the end', collect)
+  .option('--gone <selector>', 'require this to be absent at the end', collect)
+  .option('--focused <selector>', 'require focus to be on this element')
+  .option('--fixed', 'write into expectedWhenFixed instead of finalState', false)
+  .option('--clear', 'empty the assertion first', false)
+  .action(async (name: string, opts) => {
+    const repro = await readRepro(name);
+    const { repro: next, changes } = assertRepro(repro, {
+      appeared: opts.appeared,
+      gone: opts.gone,
+      focused: opts.focused,
+      whenFixed: opts.fixed,
+      clear: opts.clear,
+    });
+    await applyEdit(name, next, changes);
+  });
+
+async function applyEdit(name: string, repro: Repro, changes: string[]): Promise<void> {
+  if (!changes.length) {
+    console.log(yellow('Nothing to change.'));
+    return;
+  }
+  await writeRepro(repro, reproPaths(name));
+  for (const change of changes) console.log(`  ${green('✓')} ${change}`);
+  console.log(dim(`  → ${path.relative(process.cwd(), reproPaths(name).ir)}`));
+}
+
 function reportPass(result: RunResult): void {
   const rows: string[][] = [
     [bold('STEP'), bold('ACTION'), bold('ACT'), bold('WAIT'), bold('TOTAL'), bold('WHAT')],
@@ -158,9 +229,12 @@ function reportPass(result: RunResult): void {
   console.log(table(rows));
   for (const note of result.notes) console.log(dim(`  note  ${note}`));
   console.log('');
+  // The question is about the bug, so the answer should be too. Reading
+  // "FAIL" as good news is a workflow people route around by keeping two
+  // near-identical repros.
   const verdict = result.expectFixed
-    ? `${green('✓ FIXED')} ${dim('— the flow completed and the bug did not happen')}`
-    : `${green('✓ PASS')}  ${dim('— the recorded outcome still occurs')}`;
+    ? `${green('✓ BUG FIXED')} ${dim('— the flow completed and the bug did not happen')}`
+    : `${green('✓ BUG REPRODUCED')} ${dim('— this repro is sound')}`;
   console.log(
     `${verdict}  ${bold(result.name)} ${dim(`(${result.timings.length} steps in ${ms(result.durationMs)})`)}`,
   );
@@ -171,7 +245,11 @@ function reportFail(result: RunResult): void {
   // An infrastructure failure says nothing about the bug. Reporting it as
   // "NOT FIXED" sends people chasing a bug they have already fixed.
   const infra = f?.kind === 'infrastructure';
-  const label = infra ? '✗ COULD NOT VERIFY' : result.expectFixed ? '✗ NOT FIXED' : '✗ FAIL';
+  const label = infra
+    ? '✗ COULD NOT VERIFY'
+    : result.expectFixed
+      ? '✗ BUG STILL PRESENT'
+      : '✗ BUG DID NOT REPRODUCE';
   console.log(`${red(label)}  ${bold(result.name)} ${dim(`after ${ms(result.durationMs)}`)}`);
   if (!f) return;
   if (infra) {

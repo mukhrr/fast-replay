@@ -4,6 +4,7 @@ import {
   attachRecorder,
   flushPageReactions,
   pathOf,
+  resolvePresent,
   verifyInstrumentation,
   type StopReason,
 } from './attach.js';
@@ -115,6 +116,12 @@ export async function launchRecording(
     // the shutdown itself.
     await flushPageReactions(page);
     await new Promise((r) => setTimeout(r, 400));
+
+    // Ask the page what actually survived, so the final assertion describes
+    // where the flow ended rather than something it passed through.
+    const appeared = Array.from(new Set(session.trace.dom.flatMap((d) => d.appeared)));
+    session.trace.presentAtEnd = await resolvePresent(page, appeared);
+
     session.detach();
 
     return { trace: session.trace, storageState, stopReason, driveError };

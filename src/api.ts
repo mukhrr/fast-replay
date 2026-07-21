@@ -120,6 +120,7 @@ export async function list(root = process.cwd()): Promise<ReproSummary[]> {
   return listRepros(root);
 }
 
+export { assertRepro, fixRepro, type AssertOptions, type FixOptions } from './ir/edit.js';
 export { createReplayServer, createServer } from './mcp/server.js';
 export { BrowserPool } from './browser.js';
 export { STOP_HOTKEY };

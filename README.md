@@ -49,6 +49,8 @@ Exit `0` on pass, `1` on fail. On failure you get the failing step, what it does
 | `--setup <cmd>` | reset state before replaying |
 | `--timeout-scale <n>` | multiply recorded waits, for a slower machine |
 
+`repro run` answers in terms of the bug — `BUG REPRODUCED` / `BUG DID NOT REPRODUCE`, and with `--expect-fixed`, `BUG FIXED` / `BUG STILL PRESENT`. A run that could not drive the app says `COULD NOT VERIFY` instead of passing judgement on the bug.
+
 ### Record on staging, verify on localhost
 
 ```bash
@@ -60,6 +62,21 @@ repro run checkout-crash --env http://localhost:3000 --expect-fixed
 `--env` moves `goto` steps, the app's own network patterns and the captured session onto the target origin. Sibling hosts (`api.example.com`) move with the app; third-party origins are left alone.
 
 `-u` is the narrow version — it redirects navigation only, which leaves absolute network patterns unsatisfiable.
+
+### Repairing a recording
+
+A recording is a first draft. Repairing one used to mean hand-editing JSON:
+
+```bash
+repro fix my-bug --scale-timeouts 3 --min-timeout 8000
+repro fix my-bug --relax-network --drop-wait 'role=img[name="Loading..."]'
+repro fix my-bug --drop-step s4 --add-candidate 's2=[data-testid="save"]'
+
+repro assert my-bug --fixed --appeared 'text=Total spend'
+repro assert my-bug --fixed --focused '[data-testid="opener"]'
+```
+
+Every edit prints what it changed. `--drop-step` renumbers ids so they keep matching position.
 
 ## From a coding agent
 
@@ -142,7 +159,7 @@ The CLI and MCP server are both thin wrappers over these.
 ## Develop
 
 ```bash
-npm test          # 119 tests, unit + real-browser integration
+npm test          # 131 tests, unit + real-browser integration
 npm run stress    # records once, replays 20x, fails on a single flake
 npm run demo      # examples/demo-app
 ```

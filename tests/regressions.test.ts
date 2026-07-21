@@ -26,6 +26,7 @@ function trace(over: Partial<RecordingTrace> = {}): RecordingTrace {
     dom: [],
     navigations: [],
     focus: [],
+    presentAtEnd: [],
     documentLoads: [],
     network: [],
     console: [],

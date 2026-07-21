@@ -62,6 +62,7 @@ export async function attachRecorder(
     dom,
     navigations,
     focus,
+    presentAtEnd: [],
     documentLoads,
     network: reactions.network,
     console: reactions.console,
@@ -189,6 +190,25 @@ export async function flushPageReactions(page: Page): Promise<void> {
   } catch {
     // Page already gone (browser closed to stop recording); nothing to settle.
   }
+}
+
+/**
+ * Which of the recording's appeared-selectors are still on screen.
+ *
+ * Evaluated through Playwright rather than in the page, because a candidate may
+ * be a `role=` selector that only the driver can resolve. Capped, since this
+ * runs while the user is waiting for the recording to finish.
+ */
+export async function resolvePresent(page: Page, selectors: string[]): Promise<string[]> {
+  const present: string[] = [];
+  for (const selector of selectors.slice(0, 40)) {
+    try {
+      if ((await page.locator(selector).count()) > 0) present.push(selector);
+    } catch {
+      // A selector the engine cannot parse cannot be asserted either.
+    }
+  }
+  return present;
 }
 
 /**

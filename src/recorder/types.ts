@@ -74,6 +74,16 @@ export interface RecordingTrace {
   navigations: RawNavigationEvent[];
   focus: RawFocusEvent[];
   /**
+   * Of everything that appeared during the recording, what was still present
+   * when it ended.
+   *
+   * `finalState` must describe the state the flow leaves behind. Deriving it
+   * from the last step's transitions asserted things that had already come and
+   * gone — a modal heading that appeared and closed became a required end
+   * state, and the repro failed its own replay.
+   */
+  presentAtEnd: string[];
+  /**
    * Timestamps of real document loads.
    *
    * `framenavigated` also fires for History-API route changes, which every SPA

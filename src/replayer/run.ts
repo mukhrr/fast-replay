@@ -446,7 +446,17 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
       );
     }
 
-    const violations = checkInvariants(repro, reactions.network, reactions.console, baseUrl);
+    let violations = checkInvariants(repro, reactions.network, reactions.console, baseUrl);
+    // Build modes differ between deployments: a development server narrates
+    // where a minified one is silent. An invariant inferred from one origin
+    // cannot fairly govern another, so retargeted runs report rather than fail.
+    const retargeted = baseUrl !== repro.baseUrl || Boolean(options.envUrl);
+    if (retargeted && violations.length) {
+      for (const v of violations) {
+        notes.push(`${v.invariant} violated, not enforced across environments: ${v.detail}`);
+      }
+      violations = [];
+    }
     if (violations.length) {
       const last = repro.steps[repro.steps.length - 1];
       return await fail(

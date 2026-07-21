@@ -78,7 +78,9 @@ describe('mcp server', () => {
     const result = await call('repro_run', { name: 'checkout-crash' });
 
     expect(result.isError).toBeFalsy();
-    expect(result.content[0]?.text).toMatch(/^PASS/);
+    // The verdict speaks about the bug, not about pass/fail: an agent reading
+    // "FAIL" for a successful fix loops on code that is already correct.
+    expect(result.content[0]?.text).toMatch(/^BUG REPRODUCED/);
     expect(result.structuredContent?.passed).toBe(true);
     expect(result.structuredContent?.totalSteps).toBe(10);
 
@@ -142,8 +144,8 @@ describe('mcp server', () => {
     try {
       const result = await call('repro_run', { name: 'checkout-crash', expect_fixed: true });
       expect(result.structuredContent?.passed).toBe(true);
-      expect(result.content[0]?.text).toContain('expect-fixed');
-      expect(result.content[0]?.text).toMatch(/fix holds/i);
+      expect(result.content[0]?.text).toMatch(/^BUG FIXED/);
+      expect(result.content[0]?.text).toMatch(/did not occur/i);
     } finally {
       await writeFile(irPath, original);
     }

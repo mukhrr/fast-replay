@@ -20,9 +20,12 @@ export interface WaitRules {
 export const DEFAULT_WAIT_RULES: WaitRules = {
   triggerWindowMs: 500,
   domWindowMs: 5_000,
-  emptyTimeoutMs: 2_000,
-  minTimeoutMs: 3_000,
-  maxTimeoutMs: 15_000,
+  emptyTimeoutMs: 3_000,
+  // Recorded against a warm production build, replayed against a cold dev
+  // bundle: the same step can take several times longer for reasons that have
+  // nothing to do with the bug. A floor costs nothing when the app is fast.
+  minTimeoutMs: 5_000,
+  maxTimeoutMs: 30_000,
   timeoutSlack: 3,
   maxSelectors: 5,
 };
@@ -33,6 +36,8 @@ export interface ReactionWindow {
   network: RawNetworkEvent[];
   dom: RawDomEvent[];
   baseUrl: string;
+  /** Endpoints the app polls on its own; never a signal any action caused. */
+  ambientPatterns?: Set<string>;
 }
 
 function uniq(values: string[], max: number): string[] {
@@ -52,9 +57,11 @@ export function buildWaitAfter(
 ): WaitAfter {
   const { actionAt, windowEnd, baseUrl } = window;
 
+  const ambient = window.ambientPatterns ?? new Set<string>();
   const triggered = window.network.filter(
     (n) =>
       !isIncidentalRequest(n.url) &&
+      !ambient.has(`${n.method} ${normalizeUrlPattern(n.url, baseUrl)}`) &&
       n.startedAt >= actionAt &&
       n.startedAt <= actionAt + rules.triggerWindowMs &&
       n.settledAt !== null &&

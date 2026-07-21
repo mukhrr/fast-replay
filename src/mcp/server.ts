@@ -56,13 +56,20 @@ async function tail(file: string | null, lines: number): Promise<string> {
 /** The one-screen summary an agent reads before deciding what to do next. */
 function summarize(result: RunResult, expectFixed: boolean): string {
   const mode = expectFixed ? 'expect-fixed' : 'expect-bug';
+  const timing = `${result.timings.length}/${result.totalSteps} steps in ${(result.durationMs / 1000).toFixed(2)}s`;
+  // Stated in terms of the bug: an agent reading "FAIL" for a successful fix
+  // will loop on code that is already correct.
   const head = result.passed
-    ? `PASS (${mode}) — ${result.name}, ${result.timings.length}/${result.totalSteps} steps in ${(result.durationMs / 1000).toFixed(2)}s`
-    : `FAIL (${mode}) — ${result.name} after ${(result.durationMs / 1000).toFixed(2)}s`;
+    ? expectFixed
+      ? `BUG FIXED — ${result.name}, ${timing}`
+      : `BUG REPRODUCED — ${result.name}, ${timing}`
+    : expectFixed
+      ? `BUG STILL PRESENT — ${result.name} after ${(result.durationMs / 1000).toFixed(2)}s`
+      : `BUG DID NOT REPRODUCE — ${result.name} after ${(result.durationMs / 1000).toFixed(2)}s`;
 
   if (result.passed) {
     return expectFixed
-      ? `${head}\nThe flow completed and the recorded bug did not occur. The fix holds.`
+      ? `${head}\nThe flow completed and the recorded bug did not occur.`
       : `${head}\nThe recorded outcome still occurs, so the repro itself is sound.`;
   }
 

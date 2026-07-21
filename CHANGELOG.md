@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0 — 2026-07-21
+
+The rest of the field report.
+
+### `repro fix` and `repro assert`
+
+Repairing a recording meant hand-editing JSON — nine rounds of it in the report, about forty minutes before a fresh recording would replay at all. That gap is the adoption risk, not any individual papercut. Both commands print what they changed, and `--drop-step` renumbers ids so they keep matching position.
+
+### Verdicts speak about the bug
+
+`BUG REPRODUCED` / `BUG DID NOT REPRODUCE`, and under `--expect-fixed`, `BUG FIXED` / `BUG STILL PRESENT`. Reading `✗ FAIL` as good news is a workflow people route around by keeping two near-identical repros.
+
+### Fixes
+
+- **A polled endpoint is no longer recorded as a caused-by signal.** A keepalive on the app's own API host is invisible to host-based rules; the tell is that it also fires when nothing is happening, which is the same test already used for console output.
+- **`finalState` describes where the flow ended.** It was derived from the last step's transitions, so a modal heading that appeared and closed became a required end state and the repro failed its own replay. The recorder now asks the page what actually survived.
+- **Console and request invariants are not enforced across environments.** A repro recorded against a minified build and replayed against a dev server failed on React warnings that say nothing about the bug. Under a retarget they are reported as notes instead. Dev-build warnings are also treated as noise outright.
+- Recorded timeouts have a more generous floor (5s, ceiling 30s): a warm production build and a cold dev bundle are not the same machine.
+
 ## 0.3.0 — 2026-07-21
 
 ### Focus assertions

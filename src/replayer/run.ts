@@ -394,8 +394,15 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
             timeoutMs: FINAL_STATE_TIMEOUT_MS,
           },
         );
-        if (!outcome.ok) {
+        const focusOutcome = expected.focused
+          ? await checkFocus(page, expected.focused, FINAL_STATE_TIMEOUT_MS)
+          : { ok: true as const };
+        if (!outcome.ok || !focusOutcome.ok) {
           const last = repro.steps[repro.steps.length - 1];
+          const unmet = [...outcome.unmet];
+          if (!focusOutcome.ok) {
+            unmet.push(`focus is on ${focusOutcome.actual}, not ${expected.focused}`);
+          }
           return await fail(
             { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes, baseUrl },
             {
@@ -404,7 +411,7 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
               semantic: 'fix criterion',
               kind: 'assertion',
               expected: describeState(expected),
-              observed: `still not satisfied after ${FINAL_STATE_TIMEOUT_MS}ms:\n      ${outcome.unmet.join('\n      ')}`,
+              observed: `still not satisfied after ${FINAL_STATE_TIMEOUT_MS}ms:\n      ${unmet.join('\n      ')}`,
             },
           );
         }
@@ -555,6 +562,39 @@ async function fail(
   };
 }
 
+/**
+ * Is the focused element the one the assertion names?
+ *
+ * Checked against the live `document.activeElement` rather than a locator,
+ * because focus is a property of the document, not of any element we can wait
+ * on. Returns the selector that actually has focus when it does not match, so
+ * the failure says where focus went instead of only that it went wrong.
+ */
+async function checkFocus(
+  page: Page,
+  selector: string,
+  timeoutMs: number,
+): Promise<{ ok: true } | { ok: false; actual: string }> {
+  try {
+    await page.waitForFunction(
+      (sel) => document.activeElement?.matches(sel) ?? false,
+      selector,
+      { timeout: timeoutMs },
+    );
+    return { ok: true };
+  } catch {
+    const actual = await page
+      .evaluate(() => {
+        const el = document.activeElement;
+        if (!el) return 'nothing';
+        const id = el.getAttribute('data-testid') ?? el.id;
+        return el.tagName.toLowerCase() + (id ? `#${id}` : '');
+      })
+      .catch(() => 'unknown');
+    return { ok: false, actual };
+  }
+}
+
 /** Ceiling for the final-state assertion, independent of any step's budget. */
 const FINAL_STATE_TIMEOUT_MS = 5_000;
 
@@ -573,24 +613,35 @@ async function waitForFinalState(
   if (expectFixed) return null;
   const domAppeared = expand.expandAll(repro.assertion.finalState.domAppeared);
   const domGone = expand.expandAll(repro.assertion.finalState.domGone);
-  if (!domAppeared?.length && !domGone?.length) return null;
+  if (!domAppeared?.length && !domGone?.length && !repro.assertion.finalState.focused) return null;
 
   const outcome = await waitForReaction(ctx, {
     ...(domAppeared?.length ? { domAppeared } : {}),
     ...(domGone?.length ? { domGone } : {}),
     timeoutMs: FINAL_STATE_TIMEOUT_MS,
   });
-  return { ok: outcome.ok, unmet: outcome.unmet };
+  const unmet = [...outcome.unmet];
+  const focused = repro.assertion.finalState.focused;
+  if (focused) {
+    const f = await checkFocus(ctx.page, focused, FINAL_STATE_TIMEOUT_MS);
+    if (!f.ok) unmet.push(`focus is on ${f.actual}, not ${focused}`);
+  }
+  return { ok: unmet.length === 0, unmet };
 }
 
 function describeFinalState(repro: Repro): string {
   return describeState(repro.assertion.finalState);
 }
 
-function describeState(state: { domAppeared?: string[]; domGone?: string[] }): string {
+function describeState(state: {
+  domAppeared?: string[];
+  domGone?: string[];
+  focused?: string;
+}): string {
   return [
     ...(state.domAppeared ?? []).map((s) => `${s} to be present`),
     ...(state.domGone ?? []).map((s) => `${s} to be gone`),
+    ...(state.focused ? [`focus to be on ${state.focused}`] : []),
   ].join(', ');
 }
 

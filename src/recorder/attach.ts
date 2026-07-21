@@ -11,6 +11,7 @@ import type {
   PageEvent,
   RawActionEvent,
   RawDomEvent,
+  RawFocusEvent,
   RawNavigationEvent,
   RecordingTrace,
 } from './types.js';
@@ -52,6 +53,7 @@ export async function attachRecorder(
   const actions: RawActionEvent[] = [];
   const dom: RawDomEvent[] = [];
   const navigations: RawNavigationEvent[] = [];
+  const focus: RawFocusEvent[] = [];
   const documentLoads: number[] = [];
   const reactions: ReactionCollector = collectReactions(context);
 
@@ -59,6 +61,7 @@ export async function attachRecorder(
     actions,
     dom,
     navigations,
+    focus,
     documentLoads,
     network: reactions.network,
     console: reactions.console,
@@ -90,6 +93,7 @@ export async function attachRecorder(
     if (!ev || typeof ev !== 'object') return;
     if (ev.kind === 'action') actions.push(ev);
     else if (ev.kind === 'dom') dom.push(ev);
+    else if (ev.kind === 'focus') focus.push(ev);
   });
 
   await context.exposeBinding(config.stopBinding, () => {

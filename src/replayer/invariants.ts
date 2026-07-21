@@ -46,7 +46,9 @@ export function hasBugSignature(repro: Repro): boolean {
 /** Has the author stated what must be true once it is fixed? */
 export function hasFixCriterion(repro: Repro): boolean {
   const expected = repro.assertion.expectedWhenFixed;
-  return Boolean(expected && (expected.domAppeared?.length || expected.domGone?.length));
+  return Boolean(
+    expected && (expected.domAppeared?.length || expected.domGone?.length || expected.focused),
+  );
 }
 
 export function checkBugRecurred(

@@ -173,6 +173,10 @@ export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
     if (action.target) {
       step.target = { candidates: action.target.candidates, semantic: action.target.semantic };
     }
+
+    const settled = trace.focus.filter((f) => f.t >= action.t && f.t <= windowEnd).pop();
+    if (settled) step.focusedAfter = settled.selector;
+
     return step;
   });
 

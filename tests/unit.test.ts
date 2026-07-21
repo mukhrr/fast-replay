@@ -23,6 +23,7 @@ function trace(over: Partial<RecordingTrace> = {}): RecordingTrace {
     actions: [],
     dom: [],
     navigations: [],
+    focus: [],
     documentLoads: [],
     network: [],
     console: [],

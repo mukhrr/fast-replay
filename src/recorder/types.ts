@@ -25,7 +25,15 @@ export interface RawDomEvent {
   t: number;
 }
 
-export type PageEvent = RawActionEvent | RawDomEvent;
+/** Where keyboard focus settled. Emitted only when it actually changed. */
+export interface RawFocusEvent {
+  kind: 'focus';
+  /** CSS selector for the focused element; `body` when focus was lost. */
+  selector: string;
+  t: number;
+}
+
+export type PageEvent = RawActionEvent | RawDomEvent | RawFocusEvent;
 
 export interface RawNavigationEvent {
   kind: 'navigation';
@@ -55,6 +63,7 @@ export type RawEvent =
   | RawActionEvent
   | RawDomEvent
   | RawNavigationEvent
+  | RawFocusEvent
   | RawNetworkEvent
   | RawConsoleEvent;
 
@@ -63,6 +72,7 @@ export interface RecordingTrace {
   actions: RawActionEvent[];
   dom: RawDomEvent[];
   navigations: RawNavigationEvent[];
+  focus: RawFocusEvent[];
   /**
    * Timestamps of real document loads.
    *

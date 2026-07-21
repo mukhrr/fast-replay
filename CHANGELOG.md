@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.0 — 2026-07-21
+
+### Focus assertions
+
+Focus restoration is a large, under-tested class of accessibility bug (WCAG 2.4.3): close a dialog and focus lands on `body` instead of returning to the control that opened it. There is no console error, no failed request, and no DOM difference at the end — it is invisible to every other signal recorded here, and a deterministic replayer is the natural place to catch it.
+
+Every step now records where focus came to rest, as `step.focusedAfter`. It is informational and never asserted automatically: focus is easily perturbed, and a check nobody asked for that fails on a healthy app is how a tool gets switched off. Copy it into the assertion to make it a criterion:
+
+```jsonc
+"assertion": {
+  "expectedWhenFixed": { "focused": "button[aria-label^=\"Select a currency\"]" }
+}
+```
+
+`finalState.focused` works the same way for `repro run`. A failure names where focus actually went, not just that it went wrong.
+
 ## 0.2.0 — 2026-07-21
 
 From a field report on a production app.

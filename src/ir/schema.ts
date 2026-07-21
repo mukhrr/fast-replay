@@ -65,6 +65,15 @@ export const StepSchema = z.object({
   /** Absent for `goto`, which addresses a URL rather than an element. */
   target: TargetSchema.optional(),
   waitAfter: WaitAfterSchema,
+  /**
+   * Where keyboard focus came to rest after this step, as a CSS selector.
+   *
+   * Recorded for information, never asserted automatically — focus is easily
+   * perturbed, and a check nobody asked for that fails on a healthy app is how
+   * a tool gets switched off. Copy it into `assertion.expectedWhenFixed.focused`
+   * to make it a criterion.
+   */
+  focusedAfter: z.string().optional(),
   author: AuthorSchema.default('human'),
 });
 export type Step = z.infer<typeof StepSchema>;
@@ -106,6 +115,15 @@ export const FinalStateSchema = z.object({
   domAppeared: z.array(z.string()).optional(),
   domGone: z.array(z.string()).optional(),
   network: z.array(NetworkWaitSchema).optional(),
+  /**
+   * CSS selector the focused element must match.
+   *
+   * Focus restoration is a large, under-tested class of accessibility bug
+   * (WCAG 2.4.3): close a dialog and focus lands on `body` instead of returning
+   * to the control that opened it. Deterministic replay can settle that in one
+   * line — `"focused": "button[aria-label^=\"Select a currency\"]"`.
+   */
+  focused: z.string().optional(),
 });
 export type FinalState = z.infer<typeof FinalStateSchema>;
 

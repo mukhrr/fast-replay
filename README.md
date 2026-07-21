@@ -93,6 +93,16 @@ The recording is JSON, not generated code. It is meant to be read and hand-edite
 
 Selectors are a ladder: test id → `name` → ARIA role + accessible name → labelled ancestor → stable CSS path → text. Build-generated class names are skipped, and a path unique only by sibling position ranks below the text anchor.
 
+### Focus assertions
+
+Every step records where focus came to rest (`step.focusedAfter`). Nothing asserts it automatically — copy it into the assertion when it is the thing you care about:
+
+```jsonc
+"assertion": { "expectedWhenFixed": { "focused": "[data-testid=\"currency-picker\"]" } }
+```
+
+Focus restoration (WCAG 2.4.3) leaves no console error, no failed request and no DOM difference, so it is invisible to every other signal — and a deterministic replayer settles it in one line.
+
 ## Results
 
 Measured on one machine, same flow both ways.
@@ -132,7 +142,7 @@ The CLI and MCP server are both thin wrappers over these.
 ## Develop
 
 ```bash
-npm test          # 117 tests, unit + real-browser integration
+npm test          # 119 tests, unit + real-browser integration
 npm run stress    # records once, replays 20x, fails on a single flake
 npm run demo      # examples/demo-app
 ```

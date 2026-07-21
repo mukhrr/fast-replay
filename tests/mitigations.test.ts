@@ -315,3 +315,65 @@ describe('pdu_html v2: absence-bugs in expect-bug mode', () => {
     expect(result.passed).toBe(true);
   });
 });
+
+describe('focus assertions (WCAG 2.4.3)', () => {
+  /**
+   * The classic focus-restoration bug: closing a dialog drops focus on
+   * <body> instead of returning it to the control that opened it. No console
+   * error, no failed request, no DOM difference at the end — invisible to
+   * every other signal this tool records.
+   */
+  // A div modal that unmounts on close, which is what a component framework
+  // actually does. <dialog> is no good as a fixture: the browser restores focus
+  // for you, so the bug cannot be reproduced with it.
+  const page = (restoresFocus: boolean) => `
+    <button data-testid="opener">Open</button>
+    <div data-testid="host"></div>
+    <script>
+      const opener = document.querySelector('[data-testid="opener"]');
+      const host = document.querySelector('[data-testid="host"]');
+      opener.onclick = () => {
+        host.innerHTML = '<button data-testid="closer">Close</button>';
+        const closer = host.firstChild;
+        closer.focus();
+        closer.onclick = () => {
+          ${restoresFocus ? 'opener.focus(); host.innerHTML = "";' : 'host.innerHTML = "";'}
+        };
+      };
+    </script>`;
+
+  const record = async (html: string) => {
+    const { chromium } = await import('playwright');
+    const { agentSource } = await import('../src/recorder/instrument.js');
+    const { DEFAULT_AGENT_CONFIG } = await import('../src/recorder/agent/config.js');
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const ctx = await browser.newContext();
+      const focus: { selector?: string }[] = [];
+      await ctx.exposeBinding(DEFAULT_AGENT_CONFIG.emitBinding, (_s, ev) => {
+        if ((ev as { kind?: string }).kind === 'focus') focus.push(ev as { selector?: string });
+      });
+      const p = await ctx.newPage();
+      await p.setContent(html);
+      await p.evaluate(agentSource(DEFAULT_AGENT_CONFIG));
+      await p.click('[data-testid="opener"]');
+      await p.waitForTimeout(250);
+      await p.click('[data-testid="closer"]');
+      await p.waitForTimeout(350);
+      return focus.map((f) => f.selector);
+    } finally {
+      await browser.close();
+    }
+  };
+
+  it('records where focus came to rest, including when it is lost to body', async () => {
+    const broken = await record(page(false));
+    // Focus fell to the document — the bug, and now a recorded fact.
+    expect(broken[broken.length - 1]).toBe('body');
+  });
+
+  it('records focus returning to the control that opened the dialog', async () => {
+    const fixed = await record(page(true));
+    expect(fixed[fixed.length - 1]).toBe('[data-testid="opener"]');
+  });
+});

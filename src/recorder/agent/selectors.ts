@@ -63,6 +63,16 @@ export function goneSelector(el: Element): string | null {
   return testIdSelector(el) ?? idSelector(el);
 }
 
+/**
+ * A selector `Element.matches()` can evaluate.
+ *
+ * Focus is checked against the live `document.activeElement`, which rules out
+ * Playwright's `role=` and `text=` engines — those exist only in the driver.
+ */
+export function cssSelectorFor(el: Element): string | null {
+  return testIdSelector(el) ?? idSelector(el) ?? buildCssPath(el);
+}
+
 function allElements(): Element[] {
   return Array.from(document.querySelectorAll('*'));
 }

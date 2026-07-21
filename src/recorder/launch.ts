@@ -73,6 +73,7 @@ export async function launchRecording(
     // The first navigation is the starting point, not a step.
     session.trace.navigations.length = 0;
     session.trace.documentLoads.length = 0;
+    session.trace.focus.length = 0;
     // Neither is anything the page did to itself while booting. Layout probes
     // and autofocus fire real events before the user touches anything, and a
     // step recorded there is ordered ahead of the navigation that created the

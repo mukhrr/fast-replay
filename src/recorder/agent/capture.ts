@@ -3,7 +3,7 @@ import type { RawActionEvent } from '../types.js';
 import type { AgentConfig } from './config.js';
 import type { RevealTracker } from './reveal-tracker.js';
 import { isEditable } from './roles.js';
-import { describe } from './selectors.js';
+import { cssSelectorFor, describe } from './selectors.js';
 import { clean } from './text.js';
 import type { Transport } from './transport.js';
 
@@ -28,6 +28,14 @@ const ECHO_WINDOW_MS = 30;
  * separate gestures.
  */
 const GESTURE_WINDOW_MS = 1_000;
+
+/**
+ * How long focus must hold still before it counts as having landed.
+ *
+ * Focus bounces during a transition — a modal takes it, a guard passes it on —
+ * and only where it comes to rest describes the state a user is left in.
+ */
+const FOCUS_SETTLE_MS = 120;
 
 /** Keys that carry meaning outside a text field. */
 const MEANINGFUL_KEYS = [
@@ -151,6 +159,20 @@ export function installCapture(ctx: CaptureContext): void {
     return true;
   }
 
+  let focusTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastFocus: string | null = null;
+
+  function noteFocusChange(): void {
+    if (focusTimer) clearTimeout(focusTimer);
+    focusTimer = setTimeout(() => {
+      const el = document.activeElement;
+      const selector = el ? cssSelectorFor(el) : null;
+      if (!selector || selector === lastFocus) return;
+      lastFocus = selector;
+      transport.emit({ kind: 'focus', selector, t: Date.now() });
+    }, FOCUS_SETTLE_MS);
+  }
+
   /** Emit the preceding hover first, when that hover is what revealed this target. */
   function flushRevealingHover(actionTarget: Element | null): void {
     const hovered = reveals.takeLoadBearingHover(actionTarget);
@@ -197,7 +219,13 @@ export function installCapture(ctx: CaptureContext): void {
   on('focusin', (e) => {
     const el = targetOf(e);
     if (el && isEditable(el)) focusValue.set(el, valueOf(el));
+    noteFocusChange();
   });
+
+  // Focus lost to nothing fires focusout with no matching focusin, and that is
+  // precisely the accessibility bug worth catching: closing a dialog and
+  // dropping focus on <body> instead of returning it to whatever opened it.
+  on('focusout', () => noteFocusChange());
 
   on('mouseover', (e) => {
     const el = targetOf(e);

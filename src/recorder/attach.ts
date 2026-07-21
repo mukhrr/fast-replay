@@ -52,12 +52,14 @@ export async function attachRecorder(
   const actions: RawActionEvent[] = [];
   const dom: RawDomEvent[] = [];
   const navigations: RawNavigationEvent[] = [];
+  const documentLoads: number[] = [];
   const reactions: ReactionCollector = collectReactions(context);
 
   const trace: RecordingTrace = {
     actions,
     dom,
     navigations,
+    documentLoads,
     network: reactions.network,
     console: reactions.console,
     startedAt: Date.now(),
@@ -102,6 +104,9 @@ export async function attachRecorder(
       if (frame !== page.mainFrame()) return;
       navigations.push({ kind: 'navigation', url: frame.url(), t: Date.now() });
     });
+    // Fires only when a new document is actually parsed, so it distinguishes a
+    // real navigation from client-side routing.
+    page.on('domcontentloaded', () => documentLoads.push(Date.now()));
   };
 
   context.on('page', watchPage);

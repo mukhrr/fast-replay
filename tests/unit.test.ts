@@ -23,6 +23,7 @@ function trace(over: Partial<RecordingTrace> = {}): RecordingTrace {
     actions: [],
     dom: [],
     navigations: [],
+    documentLoads: [],
     network: [],
     console: [],
     startedAt: 0,
@@ -172,15 +173,51 @@ describe('compile', () => {
     expect(repro.steps.map((s) => s.action)).toEqual(['click']);
   });
 
-  it('records an unexplained navigation as its own goto step', () => {
+  it('records an unexplained page load as its own goto step', () => {
     const repro = compile(
       trace({
         actions: [action({ t: 1_000 })],
         navigations: [{ kind: 'navigation', url: `${BASE}/typed`, t: 8_000 }],
+        documentLoads: [8_050],
       }),
       { name: 'nav2', storageStatePath: null },
     );
     expect(repro.steps.map((s) => s.action)).toEqual(['click', 'goto']);
+  });
+
+  it('never turns client-side routing into a goto step', () => {
+    // Playwright fires framenavigated for History-API route changes, which an
+    // SPA performs on every interaction. Recording those produced a repro that
+    // was mostly `goto` steps back to the page it was already on, and replay
+    // reloaded instead of exercising the flow.
+    const repro = compile(
+      trace({
+        actions: [action({ t: 1_000 }), action({ t: 20_000 })],
+        navigations: [
+          { kind: 'navigation', url: `${BASE}/#/a`, t: 9_000 },
+          { kind: 'navigation', url: `${BASE}/#/b`, t: 30_000 },
+        ],
+        // No document ever loaded: these were pushState, not navigation.
+        documentLoads: [],
+      }),
+      { name: 'spa', storageStatePath: null },
+    );
+    expect(repro.steps.map((s) => s.action)).toEqual(['click', 'click']);
+  });
+
+  it('collapses repeated navigation to the same URL', () => {
+    const repro = compile(
+      trace({
+        actions: [],
+        navigations: [
+          { kind: 'navigation', url: `${BASE}/x`, t: 2_000 },
+          { kind: 'navigation', url: `${BASE}/x`, t: 4_000 },
+        ],
+        documentLoads: [2_050, 4_050],
+      }),
+      { name: 'dupe-goto', storageStatePath: null },
+    );
+    expect(repro.steps).toHaveLength(1);
   });
 
   it('collapses a run of scrolls to the final position', () => {

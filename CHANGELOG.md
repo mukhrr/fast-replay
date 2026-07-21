@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 — 2026-07-21
+
+- **Client-side routing is no longer recorded as a `goto` step.** Playwright fires `framenavigated` for History-API route changes, which every SPA performs on every interaction — so a recording of a routed app filled up with `goto` steps back to the page it was already on, and replay reloaded instead of exercising the flow. A navigation now becomes a step only when a document actually loaded.
+- The window for attributing a navigation to the click that caused it widens from 1 s to 5 s. On a production app a click can take seconds to settle into a route change, and mis-attributing that was the other half of the same symptom.
+- Repeated navigation to the same URL collapses to one step.
+
 ## 0.1.0 — 2026-07-21
 
 First release.

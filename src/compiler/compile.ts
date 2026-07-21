@@ -19,8 +19,17 @@ export interface CompileOptions {
 
 /** A click and a dblclick on the same element this close together are one gesture. */
 const DBLCLICK_MERGE_MS = 600;
-/** A navigation this soon after an action is that action's consequence, not a step. */
-const NAV_ATTRIBUTION_MS = 1_000;
+/**
+ * A navigation this soon after an action is that action's consequence.
+ *
+ * Generous on purpose: on a production app a click can take seconds to settle
+ * into a route change, and mis-attributing that produced a `goto` step for the
+ * page the user was already on.
+ */
+const NAV_ATTRIBUTION_MS = 5_000;
+
+/** How long after a navigation a document load still counts as the same event. */
+const DOCUMENT_LOAD_MS = 3_000;
 
 type Pending = RawActionEvent & { syntheticUrl?: string };
 
@@ -60,6 +69,15 @@ function interleaveNavigations(actions: RawActionEvent[], trace: RecordingTrace)
   for (const nav of trace.navigations) {
     const caused = actions.some((a) => nav.t - a.t >= 0 && nav.t - a.t <= NAV_ATTRIBUTION_MS);
     if (caused) continue;
+    // Client-side routing is not a navigation the replayer can perform. Every
+    // SPA pushes history on interaction — and on scroll, on filter, on tab —
+    // and `framenavigated` reports all of it. Without this, a recording of a
+    // routed app is mostly `goto` steps back to the page it is already on, and
+    // replay reloads instead of exercising the flow.
+    const loadedDocument = trace.documentLoads.some(
+      (t) => t >= nav.t - DOCUMENT_LOAD_MS && t <= nav.t + DOCUMENT_LOAD_MS,
+    );
+    if (!loadedDocument) continue;
     merged.push({
       kind: 'action',
       action: 'goto',
@@ -72,6 +90,14 @@ function interleaveNavigations(actions: RawActionEvent[], trace: RecordingTrace)
   }
 
   return merged.sort((a, b) => a.t - b.t);
+}
+
+/** Navigating twice to the same URL in a row is one navigation. */
+function collapseGotos(actions: Pending[]): Pending[] {
+  return actions.filter((action, i) => {
+    const prev = actions[i - 1];
+    return !(prev && action.action === 'goto' && prev.action === 'goto' && prev.value === action.value);
+  });
 }
 
 /** Collapse runs of scrolls on the same target down to the final position. */
@@ -95,7 +121,9 @@ function collapseScrolls(actions: Pending[]): Pending[] {
 
 export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
   const rules = options.waitRules ?? DEFAULT_WAIT_RULES;
-  const merged = collapseScrolls(interleaveNavigations(mergeDoubleClicks(trace.actions), trace));
+  const merged = collapseGotos(
+    collapseScrolls(interleaveNavigations(mergeDoubleClicks(trace.actions), trace)),
+  );
   const traceEnd = trace.endedAt || Date.now();
 
   const steps: Step[] = merged.map((action, index) => {

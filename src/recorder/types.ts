@@ -63,6 +63,14 @@ export interface RecordingTrace {
   actions: RawActionEvent[];
   dom: RawDomEvent[];
   navigations: RawNavigationEvent[];
+  /**
+   * Timestamps of real document loads.
+   *
+   * `framenavigated` also fires for History-API route changes, which every SPA
+   * performs on every interaction. Only a genuine load can be replayed as a
+   * `goto`; a route change is the consequence of whatever the user clicked.
+   */
+  documentLoads: number[];
   network: RawNetworkEvent[];
   console: RawConsoleEvent[];
   startedAt: number;

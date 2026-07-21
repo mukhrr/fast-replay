@@ -96,7 +96,24 @@ describe('buildWaitAfter', () => {
       network: [net({ settledAt: null })],
     });
     expect(wait.network).toBeUndefined();
-    expect(wait.networkIdle).toBe(true);
+    // An in-flight request means the app was never idle, so asserting idle
+    // would be asserting something that did not happen. Apps holding a
+    // websocket or long poll open — chat, live data — never go idle at all,
+    // and recording it made step one fail on every replay, forever.
+    expect(wait.networkIdle).toBeUndefined();
+  });
+
+  it('records network idle only when the app actually went idle', () => {
+    const quiet = buildWaitAfter({
+      actionAt: 1_000,
+      windowEnd: 5_000,
+      baseUrl: BASE,
+      dom: [],
+      // Outside the trigger window, so it is not a signal — but it settled,
+      // so nothing was still in flight and the app genuinely went quiet.
+      network: [net({ startedAt: 3_000, settledAt: 3_100, url: `${BASE}/api/late` })],
+    });
+    expect(quiet.networkIdle).toBe(true);
   });
 
   it('falls back to network idle when nothing reacted', () => {

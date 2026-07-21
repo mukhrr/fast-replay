@@ -60,6 +60,8 @@ export interface RunFailure {
 export interface RunResult {
   name: string;
   passed: boolean;
+  /** The origin this run actually drove, after any override. */
+  baseUrl: string;
   durationMs: number;
   /** Total steps in the IR — `timings` only covers the ones that ran. */
   totalSteps: number;
@@ -171,7 +173,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
 
       const previousStepStart = stepStart;
       stepStart = Date.now();
-      const semantic = step.target?.semantic ?? describeTargetless(step);
+      const semantic = step.target?.semantic ?? describeTargetless(step, baseUrl);
 
       let candidateIndex = -1;
       try {
@@ -188,6 +190,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
             since: previousStepStart,
             expectFixed,
             notes,
+            baseUrl,
           },
           {
             stepId: step.id,
@@ -236,6 +239,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
             since: stepStart,
             expectFixed,
             notes,
+            baseUrl,
           },
           {
             stepId: step.id,
@@ -287,7 +291,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
       if (outcome.ok) {
         const last = repro.steps[repro.steps.length - 1];
         return await fail(
-          { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes },
+          { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes, baseUrl },
           {
             stepId: last?.id ?? 'assertion',
             stepIndex: repro.steps.length - 1,
@@ -309,7 +313,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
     if (finalOutcome && !finalOutcome.ok) {
       const last = repro.steps[repro.steps.length - 1];
       return await fail(
-        { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes },
+        { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes, baseUrl },
         {
           stepId: last?.id ?? 'assertion',
           stepIndex: repro.steps.length - 1,
@@ -338,7 +342,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
       if (!hasFixCriterion(repro) && !hasBugSignature(repro)) {
         const last = repro.steps[repro.steps.length - 1];
         return await fail(
-          { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes },
+          { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes, baseUrl },
           {
             stepId: last?.id ?? 'assertion',
             stepIndex: repro.steps.length - 1,
@@ -370,7 +374,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
         if (!outcome.ok) {
           const last = repro.steps[repro.steps.length - 1];
           return await fail(
-            { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes },
+            { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes, baseUrl },
             {
               stepId: last?.id ?? 'assertion',
               stepIndex: repro.steps.length - 1,
@@ -400,7 +404,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
     if (recurred.length) {
       const last = repro.steps[repro.steps.length - 1];
       return await fail(
-        { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes },
+        { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes, baseUrl },
         {
           stepId: last?.id ?? 'assertion',
           stepIndex: repro.steps.length - 1,
@@ -426,6 +430,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
           since: stepStart,
           expectFixed,
           notes,
+          baseUrl,
         },
         {
           stepId: last?.id ?? 'assertion',
@@ -466,6 +471,7 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
     return {
       name: repro.name,
       passed: true,
+      baseUrl,
       durationMs: Date.now() - startedAt,
       totalSteps: repro.steps.length,
       expectFixed,
@@ -497,6 +503,7 @@ interface FailContext {
   since: number;
   expectFixed: boolean;
   notes: string[];
+  baseUrl: string;
 }
 
 async function fail(
@@ -513,6 +520,7 @@ async function fail(
   return {
     name: ctx.repro.name,
     passed: false,
+    baseUrl: ctx.baseUrl,
     durationMs: Date.now() - ctx.startedAt,
     totalSteps: ctx.repro.steps.length,
     expectFixed: ctx.expectFixed,
@@ -575,8 +583,12 @@ async function captureEndState(page: Page, paths: ReproPaths): Promise<string | 
   }
 }
 
-function describeTargetless(step: Step): string {
-  if (step.action === 'goto') return `navigate to ${step.value ?? '(unknown)'}`;
+function describeTargetless(step: Step, baseUrl: string): string {
+  // The URL actually navigated to, not the one recorded. Showing the recorded
+  // origin while silently replaying against an override told one user their
+  // run had gone to staging when it had gone to their local build — and the
+  // green they got looked like a verified fix of code that never ran.
+  if (step.action === 'goto') return `navigate to ${rebase(step.value, baseUrl)}`;
   if (step.action === 'scroll') return `scroll the page to ${step.value ?? '(unknown)'}`;
   if (step.action === 'press') return `press ${step.value ?? '(unknown)'}`;
   return step.action;

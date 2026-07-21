@@ -19,6 +19,15 @@ export interface CompileOptions {
 
 /** A click and a dblclick on the same element this close together are one gesture. */
 const DBLCLICK_MERGE_MS = 600;
+
+/**
+ * Keyboard activation and the click a framework synthesises from it are one
+ * gesture. React Native Web turns Enter/Space on a button into a click, so both
+ * were recorded; on replay the second one fires after the first already opened
+ * a modal, and gets intercepted by the overlay.
+ */
+const KEY_ACTIVATION_MS = 150;
+const ACTIVATION_KEYS = ['Enter', 'Space', ' '];
 /**
  * A navigation this soon after an action is that action's consequence.
  *
@@ -56,6 +65,18 @@ function mergeDoubleClicks(actions: RawActionEvent[]): RawActionEvent[] {
     out.push(action);
   }
   return out;
+}
+
+/** Drop the click a framework synthesises from a keyboard activation. */
+function dropSynthesizedActivation(actions: RawActionEvent[]): RawActionEvent[] {
+  return actions.filter((action, i) => {
+    if (action.action !== 'click') return true;
+    const prev = actions[i - 1];
+    if (!prev || prev.action !== 'press') return true;
+    if (!ACTIVATION_KEYS.includes(prev.value ?? '')) return true;
+    if (action.t - prev.t > KEY_ACTIVATION_MS) return true;
+    return prev.target?.candidates[0] !== action.target?.candidates[0];
+  });
 }
 
 /**
@@ -122,7 +143,9 @@ function collapseScrolls(actions: Pending[]): Pending[] {
 export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
   const rules = options.waitRules ?? DEFAULT_WAIT_RULES;
   const merged = collapseGotos(
-    collapseScrolls(interleaveNavigations(mergeDoubleClicks(trace.actions), trace)),
+    collapseScrolls(
+      interleaveNavigations(mergeDoubleClicks(dropSynthesizedActivation(trace.actions)), trace),
+    ),
   );
   const traceEnd = trace.endedAt || Date.now();
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.2 — 2026-07-21
+
+From a field report on a production app.
+
+- **`goto` steps displayed the recorded URL, not the one they navigated to.** The override worked — verified with two servers, the recorded origin received nothing — but the step table showed the recorded URL, so a user retargeting a repro to their local build read the staging URL and concluded the run had gone to staging. Every run now prints the effective origin once, up front, and `goto` steps show where they actually went.
+- **A framework-synthesised click after keyboard activation is dropped.** React Native Web turns Enter/Space on a button into a click, so both were recorded; on replay the second fired after the first had already opened a modal and was intercepted by the overlay.
+- **`networkIdle` is only recorded when the app actually went idle.** An app holding a websocket or long poll open — chat, live data, anything realtime — never does, so recording it as a required signal made step one fail on every replay forever.
+- The search for an identifying ancestor now reaches as far as the CSS path does. A control six levels deep was getting a positional selector while its own test id sat just above it.
+
 ## 0.1.1 — 2026-07-21
 
 - **Client-side routing is no longer recorded as a `goto` step.** Playwright fires `framenavigated` for History-API route changes, which every SPA performs on every interaction — so a recording of a routed app filled up with `goto` steps back to the page it was already on, and replay reloaded instead of exercising the flow. A navigation now becomes a step only when a document actually loaded.

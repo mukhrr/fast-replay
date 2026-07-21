@@ -101,6 +101,10 @@ program
       // Fallbacks stay cheap probes: half the primary budget.
       resolveTimeouts: { first, subsequent: Math.max(200, Math.round(first / 2)) },
     });
+    // Stated before the verdict: a run against the wrong origin looks exactly
+    // like a run against the right one until you know which it was.
+    console.log(dim(`  against ${result.baseUrl}${opts.url ? '  (overridden by -u)' : ''}`));
+    console.log('');
     result.passed ? reportPass(result) : reportFail(result);
     process.exitCode = result.passed ? 0 : 1;
   });

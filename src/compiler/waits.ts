@@ -91,7 +91,15 @@ export function buildWaitAfter(
 
   const hasSignal = network.length > 0 || domAppeared.length > 0 || domGone.length > 0;
   if (!hasSignal) {
-    return { timeoutMs: rules.emptyTimeoutMs, networkIdle: true };
+    // Only assert idle if the app was in fact idle. An app holding a websocket
+    // or a long poll open — chat, live data, anything realtime — never goes
+    // idle, so recording it as a required signal made step one fail forever.
+    const wentIdle = !window.network.some(
+      (n) => n.startedAt <= windowEnd && (n.settledAt === null || n.settledAt > windowEnd),
+    );
+    return wentIdle
+      ? { timeoutMs: rules.emptyTimeoutMs, networkIdle: true }
+      : { timeoutMs: rules.emptyTimeoutMs };
   }
 
   // Budget from what actually happened: a 1.5s endpoint earns a generous

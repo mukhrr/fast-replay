@@ -199,8 +199,12 @@ function isPositionalOnly(selector: string | null): boolean {
 function labelledAncestorSelector(el: Element): string | null {
   if (testIdSelector(el) ?? idSelector(el)) return null;
 
+  // Matches the CSS path's reach: a control six levels deep still has its
+  // identity on the wrapper, and settling for a positional path when a test id
+  // was available a few levels up is the difference between a durable repro
+  // and a brittle one.
   let cur = el.parentElement;
-  for (let depth = 0; cur && depth < 3; depth++) {
+  for (let depth = 0; cur && depth < MAX_CSS_PATH_DEPTH; depth++) {
     const anchor = testIdSelector(cur);
     if (anchor) {
       try {

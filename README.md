@@ -1,5 +1,8 @@
 # fast-replay
 
+[![CI](https://github.com/mukhrr/fast-replay/actions/workflows/ci.yml/badge.svg)](https://github.com/mukhrr/fast-replay/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/fast-replay)](https://www.npmjs.com/package/fast-replay)
+
 Record a browser bug once. Verify the fix in seconds, with no model in the loop.
 
 ```

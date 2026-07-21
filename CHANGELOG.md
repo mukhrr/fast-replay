@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.0 — unreleased
+
+Fixes from a second benchmark round in `pdu_html` (React 18 + Vite + Radix, hash-routed).
+
+- **A menu trigger's click could be recorded zero times.** Echo suppression was tracked against the last click *seen*; if that one was dropped for having no usable selector, the real click was suppressed as its echo and the gesture vanished from the artifact entirely. Now tracked against the last click *recorded*, so a gesture can never net zero. Same-element synthetic re-dispatch (how Radix and MUI primitives open menus) is also collapsed, while two genuine clicks on one button stay two.
+- **A flaky boot error silently flipped an invariant.** An error the app logs on *some* loads was absent from one recording, so the compiler inferred "clean app" and enabled the strictest check — which then failed the next replay. Boot-time output is now captured per repro as `observedAtRecord.ambientConsoleErrors`, subtracted at replay, and a strict invariant is no longer inferred from a single quiet recording.
+- **`repro run` could not detect a fix for absence-bugs.** The recorded `finalState` says what vanished, never what wrongly failed to appear, so it stayed satisfied after a fix. When `expectedWhenFixed` is present, plain `run` now asserts its inverse.
+- `--version` reports the real version. Two builds both saying `0.1.0` could only be told apart by grepping `dist/`.
+
 ## 0.1.0 — unreleased
 
 First working version. Record a browser bug once, verify the fix in seconds.

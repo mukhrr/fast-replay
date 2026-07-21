@@ -267,6 +267,39 @@ export async function runRepro(repro: Repro, options: RunOptions = {}): Promise<
     // written by the compiler, validated by the schema, documented as the
     // assertion seam, and silently ignored. A hand-edited assertion returned
     // green without ever being checked, which is worse than not having it.
+    // An absence-bug has no positive signature: the recorded finalState says
+    // what vanished, never what wrongly failed to appear, so it stays satisfied
+    // after a fix and plain `run` reports the bug still present. When the author
+    // has said what "fixed" looks like, the inverse of that is the sharper
+    // question — and the only one that can distinguish the two states.
+    if (!expectFixed && hasFixCriterion(repro)) {
+      const expected = repro.assertion.expectedWhenFixed!;
+      const outcome = await waitForReaction(
+        { page, baseUrl, network: reactions.network, since: stepStart },
+        {
+          ...(expected.domAppeared?.length
+            ? { domAppeared: expand.expandAll(expected.domAppeared) }
+            : {}),
+          ...(expected.domGone?.length ? { domGone: expand.expandAll(expected.domGone) } : {}),
+          timeoutMs: FINAL_STATE_TIMEOUT_MS,
+        },
+      );
+      if (outcome.ok) {
+        const last = repro.steps[repro.steps.length - 1];
+        return await fail(
+          { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes },
+          {
+            stepId: last?.id ?? 'assertion',
+            stepIndex: repro.steps.length - 1,
+            semantic: 'bug no longer reproduces',
+            kind: 'assertion',
+            expected: `the bug to still be present (${describeState(expected)} should NOT hold)`,
+            observed: 'the fixed-state criterion is satisfied, so this repro no longer reproduces the bug',
+          },
+        );
+      }
+    }
+
     const finalOutcome = await waitForFinalState(
       { page, baseUrl, network: reactions.network, since: stepStart },
       repro,

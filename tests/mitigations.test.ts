@@ -151,7 +151,7 @@ describe('refusing to certify a fix it could not check', () => {
 
     const paths = reproPaths('no-criterion', root);
     const repro = await readRepro('no-criterion', root);
-    repro.assertion.observedAtRecord = { consoleErrors: [], failedRequests: [] };
+    repro.assertion.observedAtRecord = { consoleErrors: [], ambientConsoleErrors: [], failedRequests: [] };
     delete repro.assertion.expectedWhenFixed;
     await writeFile(paths.ir, JSON.stringify(repro, null, 2));
 
@@ -234,6 +234,7 @@ describe('pdu_html round: verdicts', () => {
     const repro = await readRepro('criterion-wins', root);
     repro.assertion.observedAtRecord = {
       consoleErrors: ['Cannot download en.json file. Use fallback file.'],
+      ambientConsoleErrors: [],
       failedRequests: [],
     };
     repro.assertion.expectedWhenFixed = { domAppeared: ['[data-testid="report-result"]'] };
@@ -277,5 +278,40 @@ describe('pdu_html round: verdicts', () => {
     await server.reset();
     const scaled = await run({ name: 'scaled', root, timeoutScale: 15_000 });
     expect(scaled.passed, 'timeoutScale must widen recorded waits').toBe(true);
+  });
+});
+
+describe('pdu_html v2: absence-bugs in expect-bug mode', () => {
+  it('reports the bug gone when the fixed-state criterion is satisfied', async () => {
+    // The recorded finalState says what VANISHED, never what wrongly failed to
+    // appear, so it stays satisfied after a fix and plain `run` kept saying
+    // "the recorded outcome still occurs". When the author has said what fixed
+    // looks like, its inverse is the only question that discriminates.
+    await recordFlow('absence');
+    await server.reset();
+
+    const paths = reproPaths('absence', root);
+    const repro = await readRepro('absence', root);
+    repro.assertion.expectedWhenFixed = { domAppeared: ['[data-testid="report-result"]'] };
+    await writeFile(paths.ir, JSON.stringify(repro, null, 2));
+
+    const result = await run({ name: 'absence', root });
+
+    expect(result.passed, 'the criterion holds, so the bug is fixed').toBe(false);
+    expect(result.failure?.semantic).toBe('bug no longer reproduces');
+    expect(result.failure?.kind).toBe('assertion');
+  });
+
+  it('still confirms the bug when the criterion does not hold', async () => {
+    await recordFlow('absence-present');
+    await server.reset();
+
+    const paths = reproPaths('absence-present', root);
+    const repro = await readRepro('absence-present', root);
+    repro.assertion.expectedWhenFixed = { domAppeared: ['[data-testid="never-appears"]'] };
+    await writeFile(paths.ir, JSON.stringify(repro, null, 2));
+
+    const result = await run({ name: 'absence-present', root });
+    expect(result.passed).toBe(true);
   });
 });

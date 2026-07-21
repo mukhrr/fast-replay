@@ -4,6 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { list, readRepro, reproPaths, run } from '../api.js';
 import { BrowserPool } from '../browser.js';
+import { VERSION } from '../version.js';
 import type { RunResult } from '../replayer/run.js';
 
 /**
@@ -98,7 +99,7 @@ export function createServer(root = process.cwd()): McpServer {
 }
 
 export function createReplayServer(root = process.cwd()): ReplayServer {
-  const server = new McpServer({ name: 'replay', version: '0.1.0' });
+  const server = new McpServer({ name: 'replay', version: VERSION });
 
   /**
    * One browser, held open for the life of the server.

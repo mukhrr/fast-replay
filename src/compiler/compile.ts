@@ -157,6 +157,18 @@ function bugSignatureErrors(trace: RecordingTrace): string[] {
 }
 
 /**
+ * What the app logged to itself while booting, before the user acted.
+ *
+ * Captured per repro because a static pattern list can never know an
+ * individual app's noise. Subtracted at replay so the app's own chatter is
+ * never mistaken for the bug.
+ */
+function ambientErrors(trace: RecordingTrace): string[] {
+  const firstAction = trace.actions[0]?.t ?? trace.startedAt;
+  return Array.from(new Set(trace.console.filter((c) => c.t < firstAction).map((c) => c.text)));
+}
+
+/**
  * A selector that vanishes on one step and returns on the next is a component
  * re-mounting, not a state change. Replay sees the element present throughout
  * and can satisfy neither half, so both are dropped.
@@ -194,6 +206,7 @@ export function deriveAssertion(steps: Step[], trace: RecordingTrace): Assertion
   }
 
   const consoleErrors = Array.from(new Set(bugSignatureErrors(trace)));
+  const ambientConsoleErrors = ambientErrors(trace);
 
   // Third-party failures are not this app's bug and must not disable the check.
   const failedRequests = trace.network
@@ -212,11 +225,18 @@ export function deriveAssertion(steps: Step[], trace: RecordingTrace): Assertion
     mode: 'expect-bug',
     finalState,
     invariants: {
-      noConsoleErrors: consoleErrors.length === 0,
+      // Absence during one recording is not evidence of a clean app. An error
+      // that fires intermittently at boot would be absent here and present on
+      // the next run, silently flipping this invariant from run to run and
+      // failing a healthy replay. If the app logs anything at all while
+      // booting, the check is not dependable and expectedWhenFixed carries the
+      // assertion instead.
+      noConsoleErrors: consoleErrors.length === 0 && ambientConsoleErrors.length === 0,
       noFailedRequests: dedupedFailures.length === 0,
     },
     observedAtRecord: {
       consoleErrors,
+      ambientConsoleErrors,
       failedRequests: dedupedFailures,
     },
   };

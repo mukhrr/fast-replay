@@ -60,8 +60,10 @@ export function checkBugRecurred(
   const recurred: string[] = [];
 
   const normalize = (s: string): string => s.replace(/\s+/g, ' ').trim();
+  const baseline = observed.ambientConsoleErrors ?? [];
   const live = consoleErrors
     .filter((c) => !isAmbientConsoleError(c.text))
+    .filter((c) => !baseline.some((b) => c.text.startsWith(b.slice(0, 60))))
     .map((c) => normalize(c.text));
   for (const recorded of observed.consoleErrors) {
     // Compare on a prefix: stack frames and ids drift between runs, the
@@ -101,8 +103,11 @@ export function checkInvariants(
     // Same filter the compiler used. Without it the invariant is inferred from
     // filtered output but enforced against raw output, so ambient CORS and
     // connection errors fail every replay of a perfectly healthy app.
+    const baseline = repro.assertion.observedAtRecord?.ambientConsoleErrors ?? [];
+    const seenAtRecord = (text: string): boolean =>
+      baseline.some((b) => b === text || text.startsWith(b.slice(0, 60)));
     for (const err of consoleErrors) {
-      if (isAmbientConsoleError(err.text)) continue;
+      if (isAmbientConsoleError(err.text) || seenAtRecord(err.text)) continue;
       violations.push({ invariant: 'noConsoleErrors', detail: err.text });
     }
   }

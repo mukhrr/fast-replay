@@ -78,37 +78,41 @@ export function installCapture(ctx: CaptureContext): void {
   const committed = new WeakMap<Element, string>();
 
   /**
-   * One physical click can dispatch twice: a `<label>` forwards to its control,
-   * so clicking the text of a Radix or MUI checkbox reports both the span and
-   * the underlying button. Replaying both toggles it twice and silently runs a
-   * different flow than the one recorded.
+   * One physical click can dispatch more than once. A `<label>` forwards to its
+   * control; menu and dialog primitives re-dispatch a synthetic click on their
+   * trigger. Replaying every copy runs a different flow than the one recorded —
+   * two toggles instead of one, a menu opened and immediately closed.
+   *
+   * Tracked against the last click we actually RECORDED, never merely the last
+   * one seen. If a click is dropped because its target has no usable selector,
+   * the copy that follows must still be free to record: suppressing it too
+   * would leave the gesture with no step at all, which is the one outcome worse
+   * than a duplicate, because nothing in the artifact shows it happened.
    */
-  let lastClick: { el: Element; t: number } | null = null;
+  let lastRecorded: { el: Element; t: number } | null = null;
 
-  function isEchoOfLastClick(el: Element): boolean {
-    const prev = lastClick;
-    const now = Date.now();
-    lastClick = { el, t: now };
+  function isEchoOfRecordedClick(el: Element): boolean {
+    const prev = lastRecorded;
     if (!prev) return false;
-    // A forwarded click is dispatched synchronously, in the same task as the
-    // one that caused it. Anything slower is a person clicking twice.
-    if (now - prev.t > ECHO_WINDOW_MS) return false;
-    // Two events on the SAME element are always a genuine repeat — clicking
-    // "Add" twice in quick succession is a real flow, not an echo.
-    if (prev.el === el) return false;
+    // A forwarded or synthesized click lands in the same task as the one that
+    // caused it. Anything slower is a person clicking again.
+    if (Date.now() - prev.t > ECHO_WINDOW_MS) return false;
+    if (prev.el === el) return true;
     if (prev.el.contains(el) || el.contains(prev.el)) return true;
     const label = el.closest('label');
     return Boolean(label && label === prev.el.closest('label'));
   }
 
-  function emitAction(action: Action, el: Element | null, value: string | null): void {
+  /** Returns false when the step was dropped for having no addressable target. */
+  function emitAction(action: Action, el: Element | null, value: string | null): boolean {
     ctx.beforeAction?.();
     const target = el ? describe(el) : null;
-    if (el && !target) return; // nothing addressable — a step we could never replay
+    if (el && !target) return false; // nothing addressable — a step we could never replay
     const t = Date.now();
     reveals.noteAction(t);
     const ev: RawActionEvent = { kind: 'action', action, value, target, t, author: 'human' };
     transport.emit(ev);
+    return true;
   }
 
   /** Emit the preceding hover first, when that hover is what revealed this target. */
@@ -167,10 +171,10 @@ export function installCapture(ctx: CaptureContext): void {
   on('click', (e) => {
     const el = targetOf(e);
     if (!el) return;
-    if (isEchoOfLastClick(el)) return;
+    if (isEchoOfRecordedClick(el)) return;
     flushPendingFill();
     flushRevealingHover(el);
-    emitAction('click', el, null);
+    if (emitAction('click', el, null)) lastRecorded = { el, t: Date.now() };
   });
 
   on('dblclick', (e) => {

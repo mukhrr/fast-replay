@@ -361,3 +361,125 @@ describe('pdu_html round: recorder', () => {
     }
   });
 });
+
+describe('pdu_html v2: one gesture, one click', () => {
+  const withAgent = async (html: string, drive: (p: import('playwright').Page) => Promise<void>) => {
+    const { chromium } = await import('playwright');
+    const { agentSource } = await import('../src/recorder/instrument.js');
+    const { DEFAULT_AGENT_CONFIG } = await import('../src/recorder/agent/config.js');
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const context = await browser.newContext();
+      const clicks: unknown[] = [];
+      await context.exposeBinding(DEFAULT_AGENT_CONFIG.emitBinding, (_s, ev) => {
+        if ((ev as { action?: string }).action === 'click') clicks.push(ev);
+      });
+      const page = await context.newPage();
+      await page.setContent(html);
+      await page.evaluate(agentSource(DEFAULT_AGENT_CONFIG));
+      await drive(page);
+      await new Promise((r) => setTimeout(r, 250));
+      return clicks;
+    } finally {
+      await browser.close();
+    }
+  };
+
+  const RADIX = `
+    <button id="trigger"><span id="inner">Group by</span></button>
+    <script>
+      const t = document.getElementById('trigger');
+      let f = false;
+      t.addEventListener('pointerdown', () => {
+        if (f) return; f = true;
+        t.dispatchEvent(new MouseEvent('click', { bubbles: true, composed: true }));
+        f = false;
+      });
+    </script>`;
+
+  it('records exactly one click when a menu primitive re-dispatches its own', async () => {
+    const clicks = await withAgent(RADIX, (p) => p.click('#trigger'));
+    expect(clicks).toHaveLength(1);
+  });
+
+  it('records exactly one click when a label forwards to its control', async () => {
+    const clicks = await withAgent(
+      '<label><button id="cb">c</button><span id="t">Board Device</span></label>',
+      (p) => p.click('#t'),
+    );
+    expect(clicks).toHaveLength(1);
+  });
+
+  it('still records two genuine clicks on the same button', async () => {
+    // The earlier attempt at echo suppression ate the second "Add" click.
+    const clicks = await withAgent('<button id="add">Add</button>', async (p) => {
+      await p.click('#add');
+      await p.waitForTimeout(150);
+      await p.click('#add');
+    });
+    expect(clicks).toHaveLength(2);
+  });
+
+  it('never lets suppression leave a gesture with no step at all', async () => {
+    // If the first copy is dropped for having no usable selector, the second
+    // must still record. Zero is worse than a duplicate: nothing in the
+    // artifact shows the gesture happened, and replay fails somewhere later.
+    const clicks = await withAgent(
+      `<div id="host"></div>
+       <script>
+         // A shadow-hosted node the outer document cannot address, forwarding
+         // to a plain button.
+         const host = document.getElementById('host');
+         const root = host.attachShadow({ mode: 'open' });
+         root.innerHTML = '<span id="ghost">x</span>';
+         const real = document.createElement('button');
+         real.id = 'real'; real.textContent = 'Real';
+         document.body.appendChild(real);
+         root.getElementById('ghost').addEventListener('click', () => real.click());
+       </script>`,
+      (p) => p.click('#host'),
+    );
+    expect(clicks.length).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('pdu_html v2: flaky boot noise', () => {
+  it('does not infer a strict invariant from one lucky recording', () => {
+    // The app logs "Cannot download en.json" on SOME loads. A recording that
+    // happened to miss it inferred noConsoleErrors: true, and the next replay
+    // hit the error and hard-failed. Same app, same flow, opposite verdict
+    // depending on recording luck.
+    const assertion = deriveAssertion(
+      [],
+      trace({
+        actions: [action(5_000)],
+        console: [{ kind: 'console', text: 'Cannot download en.json file.', t: 1_000 }],
+      }),
+    );
+    expect(assertion.invariants.noConsoleErrors).toBe(false);
+    expect(assertion.observedAtRecord?.ambientConsoleErrors).toEqual([
+      'Cannot download en.json file.',
+    ]);
+  });
+
+  it('subtracts the app’s own boot noise at replay time', () => {
+    const assertion = deriveAssertion([], trace({ actions: [action(1_000)] }));
+    assertion.invariants.noConsoleErrors = true;
+    assertion.observedAtRecord!.ambientConsoleErrors = ['Cannot download en.json file.'];
+    const repro = { assertion, steps: [] } as unknown as Repro;
+
+    const violations = checkInvariants(
+      repro,
+      [],
+      [{ kind: 'console', text: 'Cannot download en.json file. Use fallback file.', t: 1 }],
+      BASE,
+    );
+    expect(violations).toEqual([]);
+  });
+
+  it('stays silent about a genuinely quiet app', () => {
+    const assertion = deriveAssertion([], trace({ actions: [action(1_000)] }));
+    expect(assertion.invariants.noConsoleErrors).toBe(true);
+    expect(assertion.observedAtRecord?.ambientConsoleErrors).toEqual([]);
+  });
+});

@@ -5,13 +5,15 @@ import { list, PartialRecordingError, record, run, STOP_HOTKEY } from '../api.js
 import { IRValidationError } from '../ir/schema.js';
 import type { RunResult } from '../replayer/run.js';
 import { age, bold, cyan, dim, green, ms, red, table, truncate, yellow } from './format.js';
+import { VERSION } from '../version.js';
 
 const program = new Command();
 
 program
   .name('repro')
   .description('Record a bug once, verify the fix in seconds.')
-  .version('0.1.0');
+  // Read from the manifest so a build can never misreport which one it is.
+  .version(VERSION);
 
 program
   .command('record')

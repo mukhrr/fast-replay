@@ -76,6 +76,14 @@ export type Step = z.infer<typeof StepSchema>;
  */
 export const ObservedAtRecordSchema = z.object({
   consoleErrors: z.array(z.string()).default([]),
+  /**
+   * Console output seen while the app booted, before the user acted.
+   *
+   * This app's own background noise, captured per repro rather than guessed at
+   * by a global pattern list. Replay subtracts it, so an error the app always
+   * (or intermittently) logs cannot be mistaken for the bug.
+   */
+  ambientConsoleErrors: z.array(z.string()).default([]),
   failedRequests: z
     .array(
       z.object({

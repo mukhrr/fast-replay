@@ -68,10 +68,10 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/mukhrr/replay.git"
+    "url": "git+https://github.com/mukhrr/fast-replay.git"
   },
   "bugs": {
-    "url": "https://github.com/mukhrr/replay/issues"
+    "url": "https://github.com/mukhrr/fast-replay/issues"
   },
-  "homepage": "https://github.com/mukhrr/replay#readme"
+  "homepage": "https://github.com/mukhrr/fast-replay#readme"
 }

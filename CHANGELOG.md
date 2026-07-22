@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0 — 2026-07-22
+
+### Right-click and offline
+
+Neither was recordable, which made a whole class of bug impossible to capture.
+
+- **`rightclick`.** A right-click fires `contextmenu` and never `click`, so a flow that lives inside a context menu recorded nothing for its essential steps — the recording looked like it worked and was useless. A plain click delivered alongside a right-click is dropped, since replaying both opens the menu and immediately dismisses it.
+- **`offline`.** Optimistic updates that never reconcile, queued mutations, stale caches — offline behaviour is a large class of bug and none of it can be reproduced by clicking. The page observes connectivity through `online`/`offline` events, so throwing the switch in devtools (or in the app) is recorded like anything else the user did, and replay sets it with `context.setOffline`.
+
 ## 0.6.0 — 2026-07-22
 
 ### `repro watch`

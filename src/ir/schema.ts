@@ -5,6 +5,7 @@ export const IR_VERSION = 1;
 
 export const ActionSchema = z.enum([
   'click',
+  'rightclick',
   'dblclick',
   'fill',
   'press',
@@ -12,6 +13,15 @@ export const ActionSchema = z.enum([
   'goto',
   'scroll',
   'hover',
+  /**
+   * Network connectivity, as `"true"` or `"false"` in `value`.
+   *
+   * Offline behaviour is a whole class of bug — optimistic updates that never
+   * reconcile, queued mutations, stale caches — and it cannot be reproduced by
+   * clicking. The page observes the switch through `online`/`offline` events,
+   * so it is recorded like any other thing the user did.
+   */
+  'offline',
 ]);
 export type Action = z.infer<typeof ActionSchema>;
 

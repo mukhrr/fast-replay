@@ -407,7 +407,8 @@ describe('held-open session', () => {
       for (let i = 0; i < 3; i++) {
         await server.reset();
         await run({ name: 'warm-listeners', root, session });
-        counts.push(session.context.listenerCount('console'));
+        // listenerCount comes from EventEmitter and is not on the public type.
+        counts.push((session.context as unknown as { listenerCount(e: string): number }).listenerCount('console'));
       }
       expect(new Set(counts).size, `listener counts drifted: ${counts.join(', ')}`).toBe(1);
     } finally {

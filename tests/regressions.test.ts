@@ -719,3 +719,56 @@ describe('selector ranking contract', () => {
     return { text: 0, positional: 1 };
   }
 });
+
+describe('right-click and offline', () => {
+  it('records a right-click, which fires contextmenu and never click', async () => {
+    // A flow that lives inside a context menu recorded nothing at all for its
+    // essential steps, so the whole recording was useless.
+    const { chromium } = await import('playwright');
+    const { agentSource } = await import('../src/recorder/instrument.js');
+    const { DEFAULT_AGENT_CONFIG } = await import('../src/recorder/agent/config.js');
+
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const ctx = await browser.newContext();
+      const actions: { action?: string; value?: string | null }[] = [];
+      await ctx.exposeBinding(DEFAULT_AGENT_CONFIG.emitBinding, (_s, ev) => {
+        if ((ev as { kind?: string }).kind === 'action') actions.push(ev as { action?: string });
+      });
+      const page = await ctx.newPage();
+      await page.setContent('<div data-testid="expense" style="width:200px;height:60px">Expense</div>');
+      await page.evaluate(agentSource(DEFAULT_AGENT_CONFIG));
+
+      await page.click('[data-testid="expense"]', { button: 'right' });
+      await new Promise((r) => setTimeout(r, 250));
+      expect(actions.map((a) => a.action)).toEqual(['rightclick']);
+
+      // Connectivity is a window event, so it lands whether the switch was
+      // thrown in devtools or by the app itself.
+      await ctx.setOffline(true);
+      await new Promise((r) => setTimeout(r, 350));
+      expect(actions.at(-1)).toMatchObject({ action: 'offline', value: 'true' });
+
+      await ctx.setOffline(false);
+      await new Promise((r) => setTimeout(r, 350));
+      expect(actions.at(-1)).toMatchObject({ action: 'offline', value: 'false' });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  it('drops a plain click delivered alongside a right-click', () => {
+    // Replaying both opens the context menu and then dismisses it.
+    const target = { candidates: ['#x'], semantic: 'x' };
+    const out = compile(
+      trace({
+        actions: [
+          { kind: 'action', action: 'click', value: null, target, author: 'human', t: 1_000 },
+          { kind: 'action', action: 'rightclick', value: null, target, author: 'human', t: 1_030 },
+        ],
+      }),
+      { name: 'rc', storageStatePath: null },
+    );
+    expect(out.steps.map((s) => s.action)).toEqual(['rightclick']);
+  });
+});

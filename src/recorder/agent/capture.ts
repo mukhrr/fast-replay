@@ -247,6 +247,17 @@ export function installCapture(ctx: CaptureContext): void {
     if (emitAction('click', el, null)) lastRecorded = { el, t: Date.now() };
   });
 
+  // A right-click opens a context menu, and plenty of flows live entirely
+  // inside one. It fires `contextmenu`, never `click`, so nothing was recorded.
+  on('contextmenu', (e) => {
+    const clicked = targetOf(e);
+    if (!clicked) return;
+    const el = resolveGestureTarget(clicked);
+    flushPendingFill();
+    flushRevealingHover(el);
+    emitAction('rightclick', el, null);
+  });
+
   on('dblclick', (e) => {
     const el = targetOf(e);
     if (!el) return;
@@ -296,6 +307,12 @@ export function installCapture(ctx: CaptureContext): void {
     }
     emitAction('press', el, playwrightKey(e));
   });
+
+  // Connectivity is a window-level event, not something on an element. The
+  // browser fires these whether the switch was thrown in devtools or by the
+  // app itself, so either way it lands in the recording.
+  window.addEventListener('offline', () => emitAction('offline', null, 'true'));
+  window.addEventListener('online', () => emitAction('offline', null, 'false'));
 
   installScrollCapture(ctx, emitAction);
 }

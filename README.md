@@ -177,7 +177,7 @@ Honest limits, from six benchmark rounds against two production codebases (React
 - **A bug with no console error or failed request needs one hand-written line** — `assertion.expectedWhenFixed` — or `--expect-fixed` refuses to answer rather than return a green that checked nothing.
 - **A flow that mutates server state is single-shot.** Use `--setup` to reset, or `{{random:name}}` placeholders to make inputs unique.
 - **It refuses rather than guesses.** If a selector resolves to something that is not what was recorded — a list that gained a row, so a positional match landed on the wrong record — the run reports `COULD NOT VERIFY` instead of a verdict. A wrong answer you have no reason to doubt is worse than no answer.
-- Top frame only. No iframes. Drag-and-drop and file upload are untested.
+- Records clicks, right-clicks, typing, selects, key presses, scrolls, hovers, navigation and going offline. Top frame only, no iframes; drag-and-drop and file upload are untested.
 
 ## Programmatic
 
@@ -193,7 +193,7 @@ The CLI and MCP server are both thin wrappers over these.
 ## Develop
 
 ```bash
-npm test          # 141 tests, unit + real-browser integration
+npm test          # 145 tests, unit + real-browser integration
 npm run stress    # records once, replays 20x, fails on a single flake
 npm run demo      # examples/demo-app
 ```

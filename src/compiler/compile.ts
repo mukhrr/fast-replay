@@ -67,6 +67,20 @@ function mergeDoubleClicks(actions: RawActionEvent[]): RawActionEvent[] {
   return out;
 }
 
+/**
+ * Some environments deliver a plain click alongside a right-click. Replaying
+ * both opens the context menu and then dismisses it.
+ */
+function dropClickBeforeRightClick(actions: RawActionEvent[]): RawActionEvent[] {
+  return actions.filter((action, i) => {
+    if (action.action !== 'click') return true;
+    const next = actions[i + 1];
+    if (!next || next.action !== 'rightclick') return true;
+    if (next.t - action.t > KEY_ACTIVATION_MS) return true;
+    return next.target?.candidates[0] !== action.target?.candidates[0];
+  });
+}
+
 /** Drop the click a framework synthesises from a keyboard activation. */
 function dropSynthesizedActivation(actions: RawActionEvent[]): RawActionEvent[] {
   return actions.filter((action, i) => {
@@ -144,7 +158,10 @@ export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
   const rules = options.waitRules ?? DEFAULT_WAIT_RULES;
   const merged = collapseGotos(
     collapseScrolls(
-      interleaveNavigations(mergeDoubleClicks(dropSynthesizedActivation(trace.actions)), trace),
+      interleaveNavigations(
+        mergeDoubleClicks(dropClickBeforeRightClick(dropSynthesizedActivation(trace.actions))),
+        trace,
+      ),
     ),
   );
   const traceEnd = trace.endedAt || Date.now();

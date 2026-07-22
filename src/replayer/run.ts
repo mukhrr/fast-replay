@@ -690,6 +690,9 @@ async function captureEndState(page: Page, paths: ReproPaths): Promise<string | 
 }
 
 function describeTargetless(step: Step, baseUrl: string): string {
+  if (step.action === 'offline') {
+    return step.value === 'true' ? 'go offline' : 'go back online';
+  }
   // The URL actually navigated to, not the one recorded. Showing the recorded
   // origin while silently replaying against an override told one user their
   // run had gone to staging when it had gone to their local build — and the
@@ -730,6 +733,11 @@ async function performStep(
   if (step.action === 'scroll' && !step.target) {
     const { x, y } = parsePosition(step.value);
     await page.evaluate(([px, py]) => window.scrollTo(px as number, py as number), [x, y]);
+    return -1;
+  }
+
+  if (step.action === 'offline') {
+    await page.context().setOffline(step.value === 'true');
     return -1;
   }
 
@@ -775,6 +783,9 @@ async function performStep(
   switch (step.action) {
     case 'click':
       await locator.click();
+      break;
+    case 'rightclick':
+      await locator.click({ button: 'right' });
       break;
     case 'dblclick':
       await locator.dblclick();

@@ -1,5 +1,6 @@
 import {
   IR_VERSION,
+  type Action,
   type Assertion,
   type FinalState,
   type Repro,
@@ -13,6 +14,8 @@ import { buildWaitAfter, DEFAULT_WAIT_RULES, type WaitRules } from './waits.js';
 export interface CompileOptions {
   name: string;
   storageStatePath: string | null;
+  /** Evidence the driver declared, which outranks anything derived. */
+  observed?: { selector: string; absent: boolean }[];
   createdAt?: string;
   waitRules?: WaitRules;
 }
@@ -36,6 +39,15 @@ const ACTIVATION_KEYS = ['Enter', 'Space', ' '];
  * page the user was already on.
  */
 const NAV_ATTRIBUTION_MS = 5_000;
+
+/**
+ * Actions that can plausibly navigate.
+ *
+ * A scroll or a hover cannot, so treating one as the cause of a page load both
+ * loses the navigation as a step and — worse — leaves the load's DOM signals
+ * attributed to it.
+ */
+const CAN_NAVIGATE: readonly Action[] = ['click', 'rightclick', 'dblclick', 'press', 'select'];
 
 /** How long after a navigation a document load still counts as the same event. */
 const DOCUMENT_LOAD_MS = 3_000;
@@ -102,7 +114,10 @@ function interleaveNavigations(actions: RawActionEvent[], trace: RecordingTrace)
   const merged: Pending[] = actions.map((a) => ({ ...a }));
 
   for (const nav of trace.navigations) {
-    const caused = actions.some((a) => nav.t - a.t >= 0 && nav.t - a.t <= NAV_ATTRIBUTION_MS);
+    const caused = actions.some(
+      (a) =>
+        CAN_NAVIGATE.includes(a.action) && nav.t - a.t >= 0 && nav.t - a.t <= NAV_ATTRIBUTION_MS,
+    );
     if (caused) continue;
     // Client-side routing is not a navigation the replayer can perform. Every
     // SPA pushes history on interaction — and on scroll, on filter, on tab —
@@ -170,7 +185,13 @@ export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
 
   const steps: Step[] = merged.map((action, index) => {
     const next = merged[index + 1];
-    const windowEnd = next ? next.t : traceEnd;
+    // A step's reaction ends at the next action *or* at the next page load,
+    // whichever comes first. Everything after a load belongs to the document
+    // that replaced the one this step acted on; attributing it here recorded
+    // signals the old page could never produce, and the step failed on replay
+    // every time for a reason that had nothing to do with the bug.
+    const nextLoad = trace.documentLoads.find((t) => t > action.t);
+    const windowEnd = Math.min(next ? next.t : traceEnd, nextLoad ?? Number.POSITIVE_INFINITY);
 
     const step: Step = {
       id: `s${index + 1}`,
@@ -211,7 +232,7 @@ export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
     viewport: trace.viewport,
     storageStatePath: options.storageStatePath,
     steps,
-    assertion: deriveAssertion(steps, trace),
+    assertion: deriveAssertion(steps, trace, options.observed),
   };
 }
 
@@ -300,6 +321,18 @@ function splitConsole(trace: RecordingTrace): ConsoleSplit {
 }
 
 /**
+ * Worth building an assertion on: named by the app, not by position or prose.
+ *
+ * A positional path or a text anchor may be fine for *finding* something to
+ * click, where a wrong guess fails loudly. As a criterion it is far riskier —
+ * it decides whether the bug is present, so a shaky one produces a confident
+ * wrong verdict instead of an error.
+ */
+function isDurableSelector(selector: string): boolean {
+  return selector.startsWith('[data-test') || selector.startsWith('#') || selector.startsWith('role=');
+}
+
+/**
  * A selector that vanishes on one step and returns on the next is a component
  * re-mounting, not a state change. Replay sees the element present throughout
  * and can satisfy neither half, so both are dropped.
@@ -326,23 +359,46 @@ function dropRerenderChurn(steps: Step[]): void {
  * switched off here, and the violation is preserved under `observedAtRecord`
  * so `--expect-fixed` can later assert the bug is gone.
  */
-export function deriveAssertion(steps: Step[], trace: RecordingTrace): Assertion {
+export function deriveAssertion(
+  steps: Step[],
+  trace: RecordingTrace,
+  observed?: { selector: string; absent: boolean }[],
+): Assertion {
   const last = steps[steps.length - 1];
 
   const finalState: FinalState = {};
+  // Anything the driver declared while the bug was on screen beats anything
+  // inferred afterwards: it was checked at the moment it was known to be true.
+  if (observed?.length) {
+    const present = observed.filter((o) => !o.absent).map((o) => o.selector);
+    const absent = observed.filter((o) => o.absent).map((o) => o.selector);
+    if (present.length) finalState.domAppeared = present;
+    if (absent.length) finalState.domGone = absent;
+    return buildAssertion(finalState, trace);
+  }
   if (last) {
     // Only what was still on screen when the recording stopped. A transition
     // the flow passed through is not the state it left behind, and asserting
     // one made a fresh repro fail its own replay.
-    const survived = (last.waitAfter.domAppeared ?? []).filter((s) =>
-      trace.presentAtEnd.includes(s),
-    );
+    // Only positive, durable evidence, and only what is still on screen.
+    //
+    // Anything else is a guess about which part of the flow was the bug.
+    // `domGone` in particular is unusable: almost everything is absent at the
+    // end, so deriving one picks an incidental side effect and turns it into a
+    // criterion — a BUG REPRODUCED waiting to be wrong. `network` is worse
+    // still, since a request firing says nothing about what the app rendered.
+    const survived = (last.waitAfter.domAppeared ?? [])
+      .filter((s) => trace.presentAtEnd.includes(s))
+      .filter(isDurableSelector);
     if (survived.length) finalState.domAppeared = survived;
-    if (last.waitAfter.domGone?.length) finalState.domGone = last.waitAfter.domGone;
-    if (last.waitAfter.network?.length) finalState.network = last.waitAfter.network;
     // Focus is deliberately NOT auto-asserted here; see `Step.focusedAfter`.
   }
 
+  return buildAssertion(finalState, trace);
+}
+
+/** Everything that does not depend on where the criterion came from. */
+function buildAssertion(finalState: FinalState, trace: RecordingTrace): Assertion {
   const { signature: consoleErrors, ambient: ambientConsoleErrors } = splitConsole(trace);
 
   // Third-party failures are not this app's bug and must not disable the check.
@@ -353,7 +409,6 @@ export function deriveAssertion(steps: Step[], trace: RecordingTrace): Assertion
       method: n.method,
       status: n.status,
     }));
-
   const dedupedFailures = Array.from(
     new Map(failedRequests.map((f) => [`${f.method} ${f.urlPattern} ${f.status}`, f])).values(),
   );

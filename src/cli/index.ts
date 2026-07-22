@@ -95,6 +95,7 @@ program
   )
   .option('--profile <dir>', 'replay against a persistent Chromium profile (reuses a login)')
   .option('--setup <command>', 'shell command to reset state before replaying')
+  .option('--reuse', 'keep the app booted between runs; conflicts with --setup', false)
   .option('--timeout-scale <n>', 'multiply every recorded wait; raise on slow machines', '1')
   .option(
     '--resolve-timeout <ms>',
@@ -103,6 +104,14 @@ program
   )
   .description('replay a repro at machine speed and assert the recorded outcome')
   .action(async (name: string, opts) => {
+    if (opts.reuse && opts.setup) {
+      // Undefined behaviour otherwise: the setup wipes state the warm context
+      // is still holding open.
+      throw new Error(
+        '--reuse and --setup cannot be combined: a warm page holds open the very state --setup resets.',
+      );
+    }
+    const session = opts.reuse ? await openSession({ name, headed: opts.headed }) : null;
     const first = Number(opts.resolveTimeout);
     if (!Number.isFinite(first) || first <= 0) {
       throw new Error(`Invalid --resolve-timeout "${opts.resolveTimeout}". Expected milliseconds.`);
@@ -116,6 +125,7 @@ program
       profileDir: opts.profile ?? null,
       setupCommand: opts.setup ?? null,
       timeoutScale: Number(opts.timeoutScale) || 1,
+      session,
       // Fallbacks stay cheap probes: half the primary budget.
       resolveTimeouts: { first, subsequent: Math.max(200, Math.round(first / 2)) },
     });
@@ -125,6 +135,7 @@ program
     console.log(dim(`  against ${result.baseUrl}${via}`));
     console.log('');
     result.passed ? reportPass(result) : reportFail(result);
+    await session?.close();
     process.exitCode = result.passed ? 0 : 1;
   });
 

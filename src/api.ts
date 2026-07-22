@@ -12,7 +12,7 @@ import {
   writeRepro,
   type ReproSummary,
 } from './ir/io.js';
-import { launchRecording, STOP_HOTKEY } from './recorder/launch.js';
+import { launchRecording, STOP_HOTKEY, type DriveApi } from './recorder/launch.js';
 import { runRepro, type RunOptions, type RunResult } from './replayer/run.js';
 import type { Repro } from './ir/schema.js';
 
@@ -33,7 +33,7 @@ export interface RecordOptions {
    * capture pipeline is identical either way — the seam Phase 1's `repro auto`
    * hands to an LLM browser agent.
    */
-  drive?: (page: Page) => Promise<void>;
+  drive?: (page: Page, api: DriveApi) => Promise<void>;
 }
 
 export interface RecordResult {
@@ -57,6 +57,10 @@ export class PartialRecordingError extends Error {
         `The partial repro was still written to ${irPath}`,
     );
     this.name = 'PartialRecordingError';
+    // Node prints an error's own enumerable properties, so an attached repro
+    // buried the one line that says what went wrong under the whole IR.
+    Object.defineProperty(this, 'repro', { enumerable: false });
+    Object.defineProperty(this, 'cause', { enumerable: false });
   }
 }
 
@@ -71,7 +75,7 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
   const root = options.root ?? process.cwd();
   const paths = reproPaths(options.name, root);
 
-  const { trace, storageState, stopReason, driveError } = await launchRecording({
+  const { trace, storageState, stopReason, driveError, observed } = await launchRecording({
     baseUrl: options.baseUrl,
     startPath: options.startPath,
     viewport: options.viewport,
@@ -87,6 +91,7 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
   const repro = compile(trace, {
     name: options.name,
     storageStatePath: path.relative(root, paths.storageState),
+    observed,
   });
 
   // Written before any error is raised: a driver that failed on step 12 still
@@ -159,6 +164,7 @@ export { assertRepro, fixRepro, type AssertOptions, type FixOptions } from './ir
 export { createReplayServer, createServer } from './mcp/server.js';
 export { BrowserPool } from './browser.js';
 export { STOP_HOTKEY };
+export type { DriveApi } from './recorder/launch.js';
 export { deleteRepro, readRepro, reproPaths } from './ir/io.js';
 export { compile } from './compiler/compile.js';
 export * from './ir/schema.js';

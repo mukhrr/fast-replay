@@ -34,10 +34,13 @@ export function assertValidName(name: string): void {
 
 export function reproPaths(name: string, root = process.cwd()): ReproPaths {
   assertValidName(name);
-  const reprosDir = path.join(root, REPROS_DIR);
+  // Pointing at the repros directory itself is the obvious mistake to make,
+  // and silently producing `.repros/.repros/` helps nobody.
+  const base = path.basename(root) === REPROS_DIR ? path.dirname(root) : root;
+  const reprosDir = path.join(base, REPROS_DIR);
   const dir = path.join(reprosDir, name);
   return {
-    root,
+    root: base,
     reprosDir,
     ir: path.join(reprosDir, `${name}.json`),
     dir,

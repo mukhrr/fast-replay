@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { deleteRepro, list, readRepro, reproPaths, run } from '../api.js';
+import { deleteRepro, list, openSession, readRepro, reproPaths, run } from '../api.js';
 import { BrowserPool } from '../browser.js';
 import { VERSION } from '../version.js';
 import type { RunResult } from '../replayer/run.js';
@@ -120,6 +120,16 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
    */
   const pool = new BrowserPool();
 
+  /**
+   * Warm sessions, one per repro.
+   *
+   * This is the caller that runs the same repro dozens of times, so it gains
+   * most from not re-booting the app. Opt-in per call, because reusing a
+   * context carries state between runs and a verification that has to stand on
+   * its own must not.
+   */
+  const warm = new Map<string, Awaited<ReturnType<typeof openSession>>>();
+
   server.registerTool(
     'repro_run',
     {
@@ -163,9 +173,34 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
           .number()
           .optional()
           .describe('Multiply every recorded wait. Raise it when replaying somewhere slower than the machine that recorded.'),
+        reuse: z
+          .boolean()
+          .optional()
+          .describe(
+            'Keep the browser page open between calls so the app stays booted. Much faster on a heavy app when verifying the same repro repeatedly, but state carries over between runs — do not combine with setup_command, and do not use it for a verification that must stand on its own.',
+          ),
       },
     },
-    async ({ name, expect_fixed = false, base_url, env_url, headed, profile_dir, setup_command, timeout_scale }) => {
+    async ({ name, expect_fixed = false, base_url, env_url, headed, profile_dir, setup_command, timeout_scale, reuse }) => {
+      if (reuse && setup_command) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text:
+                'reuse and setup_command cannot be combined: a warm page holds open the very state setup_command resets. ' +
+                'Drop one of them.',
+            },
+          ],
+          isError: true,
+          structuredContent: { name, passed: false, conflict: 'reuse+setup_command' },
+        };
+      }
+      let session = reuse ? warm.get(name) : undefined;
+      if (reuse && !session) {
+        session = await openSession({ name, root, headed: Boolean(headed) });
+        warm.set(name, session);
+      }
       const result = await run({
         name,
         root,
@@ -177,6 +212,7 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
         ...(profile_dir ? { profileDir: profile_dir } : {}),
         ...(setup_command ? { setupCommand: setup_command } : {}),
         ...(timeout_scale ? { timeoutScale: timeout_scale } : {}),
+        ...(session ? { session } : {}),
         ...(base_url ? { baseUrl: base_url } : {}),
         ...(env_url ? { envUrl: env_url } : {}),
       });
@@ -354,5 +390,12 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
     },
   );
 
-  return { server, dispose: () => pool.dispose() };
+  return {
+    server,
+    dispose: async () => {
+      await Promise.all(Array.from(warm.values()).map((s) => s.close().catch(() => {})));
+      warm.clear();
+      await pool.dispose();
+    },
+  };
 }

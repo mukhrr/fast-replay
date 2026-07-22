@@ -144,12 +144,26 @@ import { record } from 'fast-replay';
 await record({
   name: 'transfer-owner-lockout',
   baseUrl: 'https://staging.example.com',
-  drive: async (page) => {
+  drive: async (page, { observe }) => {
     // your setup already needs Playwright locators; reuse them here and
     // you get a durable artifact for free
+    await page.click('[data-testid="transfer"]');
+
+    // Name the evidence where you can see it. `observe` checks it now and
+    // fails the recording if it does not hold, so an assertion is never
+    // written from memory after the fact.
+    await observe('text=Only the owner can do that');
   },
 });
 ```
+
+For a repeated verification, keep the app booted between runs:
+
+```bash
+repro run my-bug --reuse          # or `repro watch my-bug` to replay on Enter
+```
+
+Cold boot is over half the wall clock on a heavy app. `--reuse` trades isolation for that, so it conflicts with `--setup` and refuses rather than behaving unpredictably.
 
 ## Results
 
@@ -193,7 +207,7 @@ The CLI and MCP server are both thin wrappers over these.
 ## Develop
 
 ```bash
-npm test          # 145 tests, unit + real-browser integration
+npm test          # 147 tests, unit + real-browser integration
 npm run stress    # records once, replays 20x, fails on a single flake
 npm run demo      # examples/demo-app
 ```

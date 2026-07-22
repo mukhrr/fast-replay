@@ -30,11 +30,32 @@ export interface LaunchRecordingOptions {
    * the page and produces the exact same IR a human recording produces, because
    * capture happens below whoever is doing the driving.
    */
-  drive?: (page: Page) => Promise<void>;
+  drive?: (page: Page, api: DriveApi) => Promise<void>;
+}
+
+/**
+ * What a programmatic recording can tell the recorder, beyond what it does.
+ *
+ * Reconstructing an assertion afterwards means naming a selector from memory
+ * and hoping it still describes the moment you saw the bug. `observe` records
+ * it at the point in the flow where it is known to be true, which is the only
+ * place that knowledge exists.
+ */
+export interface DriveApi {
+  /**
+   * Record a selector as evidence of the bug, checked now.
+   *
+   * Throws if it does not currently hold, because an assertion that was already
+   * false when written is worse than none — it would pass or fail for reasons
+   * unrelated to the bug forever after.
+   */
+  observe(selector: string, options?: { absent?: boolean }): Promise<void>;
 }
 
 export interface RecordingResult {
   trace: RecordingTrace;
+  /** Evidence the driver declared while the bug was on screen. */
+  observed: { selector: string; absent: boolean }[];
   /** Serialized storageState captured at the START of the recording. */
   storageState: string;
   stopReason: StopReason;
@@ -87,6 +108,22 @@ export async function launchRecording(
     const onSigint = (): void => session.stop('signal');
     process.once('SIGINT', onSigint);
 
+    const observed: { selector: string; absent: boolean }[] = [];
+    const api: DriveApi = {
+      async observe(selector, opts) {
+        const absent = Boolean(opts?.absent);
+        const count = await page.locator(selector).count();
+        const holds = absent ? count === 0 : count > 0;
+        if (!holds) {
+          throw new Error(
+            `observe(${JSON.stringify(selector)}${absent ? ', { absent: true }' : ''}) does not hold right now. ` +
+              `Recording an assertion that is already false would produce a verdict about something other than the bug.`,
+          );
+        }
+        observed.push({ selector, absent });
+      },
+    };
+
     let driveError: Error | null = null;
     let stopReason: StopReason;
     try {
@@ -95,7 +132,7 @@ export async function launchRecording(
           // A driven session ends when the driver is done — but an early browser
           // close or hotkey still wins, so takeover behaves the same either way.
           await Promise.race([
-            options.drive(page).then(() => session.stop('programmatic')),
+            options.drive(page, api).then(() => session.stop('programmatic')),
             session.stopped,
           ]);
         } catch (err) {
@@ -124,7 +161,7 @@ export async function launchRecording(
 
     session.detach();
 
-    return { trace: session.trace, storageState, stopReason, driveError };
+    return { trace: session.trace, storageState, stopReason, driveError, observed };
   } finally {
     await opened.close();
   }

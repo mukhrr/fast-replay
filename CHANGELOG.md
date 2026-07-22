@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.8.0 — 2026-07-22
+
+### `observe()` — name the evidence where you can see it
+
+`drive()` now receives an `observe(selector, { absent })` that records a criterion **and checks it on the spot**, failing the recording if it does not hold. Reconstructing an assertion afterwards meant naming a selector from memory and hoping it still described the moment the bug was on screen. What is observed outranks anything derived.
+
+### A page load no longer poisons the step before it
+
+Two compounding faults. A navigation counted as "caused by" any action within five seconds — including a scroll, which cannot navigate — so a programmatic `page.goto()` was neither recorded as a step nor treated as a page load. And no step's reaction window stopped at a document load, so signals from the *new* page were attributed to a step on the old one. The step then failed on every replay waiting for things it could never see, which is silent and takes a while to trace back.
+
+Only actions that can navigate now count, and every step's window ends at the next page load.
+
+### The derived assertion no longer invents a criterion
+
+It could pick `domGone` on an incidental side effect and turn it into the definition of the bug — a `BUG REPRODUCED` waiting to be wrong. Derivation is now limited to positive evidence that is still on screen at the end and named by a durable selector; `domGone` and `network` are never derived. `observe()` is the way to say what you actually mean.
+
+### `--reuse`
+
+`repro run --reuse` and `reuse: true` on the MCP `repro_run`, so the caller that replays the same repro dozens of times stops re-booting the app between runs. It conflicts with `--setup` — one holds state open, the other wipes it — and now says so instead of behaving unpredictably.
+
+### Papercuts
+
+- `root` pointing at `.repros` no longer produces `.repros/.repros/`.
+- `PartialRecordingError` no longer prints the whole IR ahead of the one line saying what went wrong.
+
 ## 0.7.0 — 2026-07-22
 
 ### Right-click and offline

@@ -416,3 +416,45 @@ describe('held-open session', () => {
     }
   });
 });
+
+describe('observe() from drive()', () => {
+  it('records evidence at the moment it is known to be true', async () => {
+    // Reconstructing an assertion afterwards means naming a selector from
+    // memory and hoping it still describes the moment the bug was on screen.
+    await server.reset();
+    const { repro } = await record({
+      name: 'observed',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      drive: async (page, api) => {
+        await page.waitForSelector('[data-testid="sensor-row-1"]');
+        await page.click('button[aria-label="Delete Sensor 2"]');
+        await page.waitForSelector('[data-testid="confirm-toast"]');
+        await api.observe('[data-testid="confirm-toast"]');
+        await api.observe('[data-testid="sensor-row-2"]', { absent: true });
+      },
+    });
+
+    expect(repro.assertion.finalState.domAppeared).toEqual(['[data-testid="confirm-toast"]']);
+    expect(repro.assertion.finalState.domGone).toEqual(['[data-testid="sensor-row-2"]']);
+  });
+
+  it('refuses an observation that is already false', async () => {
+    // An assertion written while untrue would pass or fail forever after for
+    // reasons unrelated to the bug.
+    await server.reset();
+    await expect(
+      record({
+        name: 'observed-bad',
+        baseUrl: server.baseUrl,
+        root,
+        headless: true,
+        drive: async (page, api) => {
+          await page.waitForSelector('[data-testid="sensor-row-1"]');
+          await api.observe('[data-testid="never-exists"]');
+        },
+      }),
+    ).rejects.toThrow(/does not hold right now/);
+  });
+});

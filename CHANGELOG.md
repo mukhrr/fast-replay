@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.0 — 2026-07-22
+
+### Shared setup steps
+
+The preamble to a bug — sign in, open a workspace, get to a chat — is the same across most repros, and re-deriving it per repro is the largest cost in authoring one. A step is a plain function, so it stays readable and diffable. What this adds is the two things a function alone cannot:
+
+- **Discovery.** `repro steps` lists what exists, and the MCP server exposes the same list, so an agent checks before writing a fourth sign-in helper.
+- **A contract.** `ensures` is verified after the step runs. When the login page moves, one step fails by name; without it, every repro that walked through the preamble fails separately and somewhere further along, looking like unrelated bugs.
+
+`requires` runs dependencies first, once each.
+
+Deliberately not included: matching an issue's prose to a step. That is a judgement, and this tool does not call models — choosing *which* step to use belongs to the agent reading the issue, which has the context. The tool supplies the list and the guarantees.
+
+For credentials specifically, replaying sign-in is still the wrong tool: `--profile` reuses a real session, which is faster, less flaky, and keeps credentials away from the IR.
+
 ## 0.8.0 — 2026-07-22
 
 ### `observe()` — name the evidence where you can see it

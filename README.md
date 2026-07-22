@@ -157,6 +157,36 @@ await record({
 });
 ```
 
+### Shared setup steps
+
+The preamble to a bug is the same across most repros — sign in, open a workspace, get to a chat. Write it once:
+
+```ts
+// .repros/steps/workspace-chat.mjs
+import { defineStep } from 'fast-replay';
+
+export default defineStep({
+  name: 'workspace-chat',
+  description: 'Signed in and viewing a workspace chat',
+  requires: ['signed-in'],
+  ensures: '[data-testid="report-screen"]',   // checked after it runs
+  async run(page) { /* ... */ },
+});
+```
+
+```ts
+drive: async (page, { step, observe }) => {
+  await step('workspace-chat');   // dependencies run first, once each
+  ...
+}
+```
+
+`repro steps` lists what exists, and the MCP server exposes the same list — so an agent checks before writing a fourth sign-in helper.
+
+`ensures` is the part that earns its keep. When the login page moves, one step fails by name and says so; without it, every repro that walked through the preamble fails separately, somewhere further along, looking like unrelated bugs.
+
+**For credentials specifically, prefer not replaying sign-in at all.** `repro record --profile ./.replay-profile` signs in once and reuses the session — faster, less flaky, and no credentials near the IR.
+
 For a repeated verification, keep the app booted between runs:
 
 ```bash
@@ -207,7 +237,7 @@ The CLI and MCP server are both thin wrappers over these.
 ## Develop
 
 ```bash
-npm test          # 147 tests, unit + real-browser integration
+npm test          # 153 tests, unit + real-browser integration
 npm run stress    # records once, replays 20x, fails on a single flake
 npm run demo      # examples/demo-app
 ```

@@ -8,6 +8,7 @@ import {
   verifyInstrumentation,
   type StopReason,
 } from './attach.js';
+import { runStep, type LoadedStep } from '../steps.js';
 import type { RecordingTrace } from './types.js';
 
 export interface LaunchRecordingOptions {
@@ -16,6 +17,8 @@ export interface LaunchRecordingOptions {
   viewport?: { width: number; height: number };
   /** Seed cookies/localStorage/IndexedDB from an existing Playwright state file. */
   storageStatePath?: string | null;
+  /** Shared setup steps available to `drive` via `step(name)`. */
+  steps?: Map<string, LoadedStep>;
   /** Record against a persistent Chromium profile instead of a fresh context. */
   profileDir?: string | null;
   /** Called once the browser is up and instrumented, so the CLI can print help. */
@@ -42,6 +45,14 @@ export interface LaunchRecordingOptions {
  * place that knowledge exists.
  */
 export interface DriveApi {
+  /**
+   * Run a shared setup step and confirm it reached the state it promises.
+   *
+   * The preamble to a bug — sign in, open a workspace — is the same across
+   * most repros. Sharing it as a function means one place to fix when the app
+   * moves, instead of re-recording every repro that walked through it.
+   */
+  step(name: string): Promise<void>;
   /**
    * Record a selector as evidence of the bug, checked now.
    *
@@ -109,7 +120,11 @@ export async function launchRecording(
     process.once('SIGINT', onSigint);
 
     const observed: { selector: string; absent: boolean }[] = [];
+    const ranSteps = new Set<string>();
     const api: DriveApi = {
+      async step(name) {
+        await runStep(name, page, options.steps ?? new Map(), ranSteps);
+      },
       async observe(selector, opts) {
         const absent = Boolean(opts?.absent);
         const count = await page.locator(selector).count();

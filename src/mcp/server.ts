@@ -3,6 +3,7 @@ import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { deleteRepro, list, openSession, readRepro, reproPaths, run } from '../api.js';
+import { loadSteps, STEPS_DIR } from '../steps.js';
 import { BrowserPool } from '../browser.js';
 import { VERSION } from '../version.js';
 import type { RunResult } from '../replayer/run.js';
@@ -252,6 +253,39 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
           baseUrl: result.baseUrl,
           screenshot: result.finalScreenshot,
         },
+      };
+    },
+  );
+
+  server.registerTool(
+    'repro_steps',
+    {
+      title: 'List shared setup steps',
+      description:
+        'List the reusable setup steps this project already has — sign-in, navigating to a workspace, and so on — with what state each leaves you in. ' +
+        'Check this BEFORE writing new setup code for a repro: reusing an existing step means one place to fix when the app changes, ' +
+        'where a fresh copy means every repro breaks separately. Write a new step only when nothing here reaches the state you need.',
+      inputSchema: {},
+    },
+    async () => {
+      const { steps, errors } = await loadSteps(path.join(root, STEPS_DIR));
+      const lines = Array.from(steps.values()).map(
+        (s) =>
+          `${s.name} — ${s.description}` +
+          (s.requires?.length ? ` (requires: ${s.requires.join(', ')})` : '') +
+          (s.ensures ? '' : ' [WARNING: verifies nothing, so a break here surfaces elsewhere]'),
+      );
+      for (const e of errors) lines.push(`${e.file} — could not be loaded: ${e.message}`);
+      return {
+        content: [
+          {
+            type: 'text',
+            text: lines.length
+              ? lines.join('\n')
+              : `No shared steps yet. Add one at ${STEPS_DIR}/<name>.mjs with a default export from defineStep().`,
+          },
+        ],
+        structuredContent: { steps: Array.from(steps.values()).map(({ run, ...rest }) => rest), errors },
       };
     },
   );

@@ -54,13 +54,14 @@ const call = (name: string, args: Record<string, unknown> = {}) =>
   client.callTool({ name, arguments: args }) as Promise<ToolResult>;
 
 describe('mcp server', () => {
-  it('advertises the three tools an agent needs', async () => {
+  it('advertises the tools an agent needs', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'repro_artifacts',
       'repro_delete',
       'repro_list',
       'repro_run',
+      'repro_steps',
     ]);
     // The description is the only thing steering an agent toward using it.
     const run = tools.find((t) => t.name === 'repro_run');
@@ -150,6 +151,15 @@ describe('mcp server', () => {
     } finally {
       await writeFile(irPath, original);
     }
+  });
+
+  it('steers the agent to reuse setup before writing more', async () => {
+    // An agent starting fresh has no idea what exists and will happily write a
+    // fourth sign-in helper, which is how a preamble ends up breaking every
+    // repro separately instead of once.
+    const steps = (await client.listTools()).tools.find((t) => t.name === 'repro_steps');
+    expect(steps?.description).toMatch(/BEFORE writing new setup/i);
+    expect(steps?.description).toMatch(/reusing an existing step/i);
   });
 
   it('tells the agent to clean up once a fix is verified', async () => {

@@ -13,6 +13,7 @@ import {
   type ReproSummary,
 } from './ir/io.js';
 import { launchRecording, STOP_HOTKEY, type DriveApi } from './recorder/launch.js';
+import { loadSteps, STEPS_DIR } from './steps.js';
 import { runRepro, type RunOptions, type RunResult } from './replayer/run.js';
 import type { Repro } from './ir/schema.js';
 
@@ -34,6 +35,8 @@ export interface RecordOptions {
    * hands to an LLM browser agent.
    */
   drive?: (page: Page, api: DriveApi) => Promise<void>;
+  /** Directory of shared setup steps. Defaults to `.repros/steps`. */
+  stepsDir?: string | null;
 }
 
 export interface RecordResult {
@@ -75,6 +78,13 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
   const root = options.root ?? process.cwd();
   const paths = reproPaths(options.name, root);
 
+  const { steps: sharedSteps, errors: stepErrors } = await loadSteps(
+    options.stepsDir ?? path.join(root, STEPS_DIR),
+  );
+  for (const e of stepErrors) {
+    process.stderr.write(`warning: shared step ${e.file} could not be loaded — ${e.message}\n`);
+  }
+
   const { trace, storageState, stopReason, driveError, observed } = await launchRecording({
     baseUrl: options.baseUrl,
     startPath: options.startPath,
@@ -84,6 +94,7 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
     onReady: options.onReady,
     headless: options.headless,
     drive: options.drive,
+    steps: sharedSteps,
   });
 
   await writeFileAtomic(paths.storageState, storageState);
@@ -163,6 +174,15 @@ export async function list(root = process.cwd()): Promise<ReproSummary[]> {
 export { assertRepro, fixRepro, type AssertOptions, type FixOptions } from './ir/edit.js';
 export { createReplayServer, createServer } from './mcp/server.js';
 export { BrowserPool } from './browser.js';
+export {
+  defineStep,
+  loadSteps,
+  runStep,
+  StepError,
+  STEPS_DIR,
+  type LoadedStep,
+  type StepDefinition,
+} from './steps.js';
 export { STOP_HOTKEY };
 export type { DriveApi } from './recorder/launch.js';
 export { deleteRepro, readRepro, reproPaths } from './ir/io.js';

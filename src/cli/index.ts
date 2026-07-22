@@ -15,6 +15,7 @@ import {
   STOP_HOTKEY,
 } from '../api.js';
 import { writeRepro } from '../ir/io.js';
+import { loadSteps, STEPS_DIR } from '../steps.js';
 import { IRValidationError, type Repro } from '../ir/schema.js';
 import type { RunResult } from '../replayer/run.js';
 import { age, bold, cyan, dim, green, ms, red, table, truncate, yellow } from './format.js';
@@ -137,6 +138,38 @@ program
     result.passed ? reportPass(result) : reportFail(result);
     await session?.close();
     process.exitCode = result.passed ? 0 : 1;
+  });
+
+program
+  .command('steps')
+  .description('list the shared setup steps available to drive()')
+  .option('--dir <path>', 'where the steps live', STEPS_DIR)
+  .action(async (opts) => {
+    const { steps, errors } = await loadSteps(opts.dir);
+    for (const e of errors) console.log(`  ${red('✗')} ${e.file} — ${e.message}`);
+    if (!steps.size) {
+      console.log(dim(`No shared steps in ${opts.dir}.`));
+      console.log(dim('A step is a function that gets you to a known state, reusable across repros:'));
+      console.log('');
+      console.log(dim("  import { defineStep } from 'fast-replay';"));
+      console.log(dim('  export default defineStep({'));
+      console.log(dim("    name: 'signed-in',"));
+      console.log(dim("    description: 'Signed in as the seed account, on the home screen',"));
+      console.log(dim("    ensures: '[data-testid=\"home\"]',"));
+      console.log(dim('    async run(page) { /* ... */ },'));
+      console.log(dim('  });'));
+      return;
+    }
+    const rows: string[][] = [
+      [bold('STEP'), bold('LEAVES YOU'), bold('REQUIRES'), bold('VERIFIED BY')],
+      ...Array.from(steps.values()).map((s) => [
+        cyan(s.name),
+        truncate(s.description, 44),
+        (s.requires ?? []).join(', ') || dim('—'),
+        s.ensures ? dim(truncate(s.ensures, 28)) : yellow('nothing'),
+      ]),
+    ];
+    console.log(table(rows));
   });
 
 program

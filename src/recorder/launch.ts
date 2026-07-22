@@ -52,7 +52,7 @@ export interface DriveApi {
    * most repros. Sharing it as a function means one place to fix when the app
    * moves, instead of re-recording every repro that walked through it.
    */
-  step(name: string): Promise<void>;
+  step(name: string, params?: Record<string, string>): Promise<void>;
   /**
    * Record a selector as evidence of the bug, checked now.
    *
@@ -67,6 +67,8 @@ export interface RecordingResult {
   trace: RecordingTrace;
   /** Evidence the driver declared while the bug was on screen. */
   observed: { selector: string; absent: boolean }[];
+  /** Shared setup the driver invoked, to be referenced rather than recorded. */
+  setup: { step: string; params?: Record<string, string> }[];
   /** Serialized storageState captured at the START of the recording. */
   storageState: string;
   stopReason: StopReason;
@@ -120,10 +122,20 @@ export async function launchRecording(
     process.once('SIGINT', onSigint);
 
     const observed: { selector: string; absent: boolean }[] = [];
+    const setup: { step: string; params?: Record<string, string> }[] = [];
     const ranSteps = new Set<string>();
     const api: DriveApi = {
-      async step(name) {
-        await runStep(name, page, options.steps ?? new Map(), ranSteps);
+      async step(name, params) {
+        // Nothing setup does belongs in the IR. Recorded, it is copied into
+        // every repro that used it, and fixing the shared function would fix
+        // none of them.
+        session.suspend();
+        try {
+          await runStep(name, page, options.steps ?? new Map(), ranSteps, params ?? {});
+        } finally {
+          session.resume();
+        }
+        setup.push({ step: name, ...(params ? { params } : {}) });
       },
       async observe(selector, opts) {
         const absent = Boolean(opts?.absent);
@@ -176,7 +188,7 @@ export async function launchRecording(
 
     session.detach();
 
-    return { trace: session.trace, storageState, stopReason, driveError, observed };
+    return { trace: session.trace, storageState, stopReason, driveError, observed, setup };
   } finally {
     await opened.close();
   }

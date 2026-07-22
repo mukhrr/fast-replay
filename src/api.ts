@@ -85,7 +85,7 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
     process.stderr.write(`warning: shared step ${e.file} could not be loaded — ${e.message}\n`);
   }
 
-  const { trace, storageState, stopReason, driveError, observed } = await launchRecording({
+  const { trace, storageState, stopReason, driveError, observed, setup } = await launchRecording({
     baseUrl: options.baseUrl,
     startPath: options.startPath,
     viewport: options.viewport,
@@ -103,6 +103,7 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
     name: options.name,
     storageStatePath: path.relative(root, paths.storageState),
     observed,
+    setup,
   });
 
   // Written before any error is raised: a driver that failed on step 12 still
@@ -154,7 +155,10 @@ export async function openSession(options: {
 export async function run(options: RunReproOptions): Promise<RunResult> {
   const root = options.root ?? process.cwd();
   const repro = await readRepro(options.name, root);
-  const result = await runRepro(repro, options);
+  const { steps } = repro.setup.length
+    ? await loadSteps(path.join(root, STEPS_DIR))
+    : { steps: new Map() };
+  const result = await runRepro(repro, { ...options, steps: options.steps ?? steps });
 
   await writeLastResult(reproPaths(options.name, root), {
     status: result.passed ? 'pass' : 'fail',

@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { record } from '../src/api.js';
+import { record, run } from '../src/api.js';
 import { loadSteps, runStep, StepError } from '../src/steps.js';
 import { startDemoServer, type DemoServer } from './helpers/demo-server.js';
 
@@ -47,6 +47,20 @@ beforeAll(async () => {
      };`,
   );
   await step(
+    'named',
+    `export default {
+       name: 'named',
+       description: 'A sensor with the given name exists',
+       ensures: '[data-testid="sensor-row-4"]',
+       defaults: { name: 'Probe' },
+       async run(page, { name }) {
+         await page.waitForSelector('[data-testid="sensor-list"]');
+         await page.fill('[data-testid="sensor-name-input"]', name);
+         await page.click('[data-testid="add-sensor"]');
+       },
+     };`,
+  );
+  await step(
     'lies',
     `export default {
        name: 'lies',
@@ -67,7 +81,7 @@ describe('discovery', () => {
   it('lists what exists, so a fourth sign-in helper does not get written', async () => {
     const { steps, errors } = await loadSteps(stepsDir);
     expect(errors).toEqual([]);
-    expect(Array.from(steps.keys()).sort()).toEqual(['lies', 'one-added', 'sensors-loaded']);
+    expect(Array.from(steps.keys()).sort()).toEqual(['lies', 'named', 'one-added', 'sensors-loaded']);
     expect(steps.get('one-added')?.description).toContain('Probe');
   });
 
@@ -77,7 +91,7 @@ describe('discovery', () => {
     await writeFile(path.join(stepsDir, 'broken.mjs'), 'export default { nope: true };', 'utf8');
     try {
       const { steps, errors } = await loadSteps(stepsDir);
-      expect(steps.size).toBe(3);
+      expect(steps.size).toBe(4);
       expect(errors[0]?.message).toContain('defineStep');
     } finally {
       await rm(path.join(stepsDir, 'broken.mjs'), { force: true });
@@ -133,5 +147,78 @@ describe('running', () => {
     } finally {
       await browser.close();
     }
+  });
+});
+
+describe('setup is referenced, not recorded', () => {
+  it('keeps the preamble out of the IR', async () => {
+    // Inlined, a preamble is copied into every repro that used it — so fixing
+    // the shared function would fix none of them, which is the entire reason
+    // to share it. The IR should hold the observation and nothing else.
+    await server.reset();
+    const { repro } = await record({
+      name: 'referenced',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      drive: async (page, { step, observe }) => {
+        await step('one-added');
+        await page.click('button[aria-label="Delete Probe"]');
+        await page.waitForSelector('[data-testid="confirm-toast"]');
+        await observe('[data-testid="confirm-toast"]');
+      },
+    });
+
+    expect(repro.setup).toEqual([{ step: 'one-added' }]);
+    expect(repro.steps).toHaveLength(1);
+    expect(repro.steps[0]?.target?.semantic).toContain('Delete Probe');
+  });
+
+  it('runs the referenced setup at replay and passes', async () => {
+    await server.reset();
+    const result = await run({ name: 'referenced', root });
+    expect(result.failure, JSON.stringify(result.failure)).toBeNull();
+    expect(result.passed).toBe(true);
+  });
+
+  it('blames setup, not the bug, when a preamble stops working', async () => {
+    await server.reset();
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const irPath = path.join(root, '.repros/referenced.json');
+    const original = await readFile(irPath, 'utf8');
+    const broken = JSON.parse(original);
+    broken.setup = [{ step: 'lies' }];
+    await writeFile(irPath, JSON.stringify(broken, null, 2));
+
+    try {
+      const result = await run({ name: 'referenced', root });
+      expect(result.passed).toBe(false);
+      // Not a verdict on the bug: the flow never got to where the bug lives.
+      expect(result.failure?.kind).toBe('infrastructure');
+      expect(result.failure?.semantic).toContain('lies');
+    } finally {
+      await writeFile(irPath, original);
+    }
+  });
+
+  it('passes parameters through to the step and records them', async () => {
+    await server.reset();
+    const { repro } = await record({
+      name: 'parameterised',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      drive: async (page, { step, observe }) => {
+        // The identical part is shared; only the unique value differs.
+        await step('named', { name: 'Boiler' });
+        await observe('[data-testid="sensor-row-4"]');
+      },
+    });
+    expect(repro.setup).toEqual([{ step: 'named', params: { name: 'Boiler' } }]);
+
+    const sensors = (await (await fetch(`${server.baseUrl}/api/sensors`)).json()) as {
+      name: string;
+    }[];
+    expect(sensors.map((s) => s.name)).toContain('Boiler');
   });
 });

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.0 — 2026-07-22
+
+### Setup is referenced, not recorded
+
+0.9.0 shipped shared steps that were **inlined**: a step's clicks landed in the IR like any others. That made the central promise false — a preamble copied into every repro means fixing the shared function fixes none of them, which is the entire reason to share it. Replay also re-did the preamble click by click, which for sign-in is exactly what a session seed exists to avoid.
+
+Capture is now suspended while a step runs. The IR records `setup: [{ step, params }]` and replay executes the function, so the recording holds only the bug flow and one fix reaches every repro. A step that fails reports as `COULD NOT VERIFY` by name — the flow never reached where the bug lives, so it is not a verdict on the bug.
+
+The trade: a repro is no longer self-contained JSON, it needs the steps directory. Setup was never portable anyway — it depends on accounts, data and the app.
+
+### Parameters
+
+`step('signed-in')` for the identical case, `step('new-account', { plan: 'control' })` where a bug genuinely differs. `defaults` keeps the common call empty, and the values used are recorded so replay uses the same ones.
+
 ## 0.9.0 — 2026-07-22
 
 ### Shared setup steps

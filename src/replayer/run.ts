@@ -26,6 +26,7 @@ import {
   TargetResolutionError,
   type ResolveTimeouts,
 } from './resolve.js';
+import { runStep, StepError, type LoadedStep } from '../steps.js';
 import { retargetRepro, retargetStorageState, type StorageState } from './retarget.js';
 import { createExpander, type Expander } from './values.js';
 import { waitForReaction } from './waits.js';
@@ -154,6 +155,8 @@ export interface RunOptions {
    * hand-editing — the record-here, replay-there path the tool exists for.
    */
   envUrl?: string | null;
+  /** Shared setup steps, so a repro's `setup` references can be executed. */
+  steps?: Map<string, LoadedStep>;
 }
 
 export async function runRepro(input: Repro, options: RunOptions = {}): Promise<RunResult> {
@@ -205,6 +208,30 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
     await page.goto(new URL(repro.startPath, baseUrl).toString(), {
       waitUntil: 'domcontentloaded',
     });
+
+    // Setup runs as code, not as replayed clicks, so a fix to a shared step
+    // reaches every repro that references it.
+    if (repro.setup.length) {
+      const ran = new Set<string>();
+      for (const entry of repro.setup) {
+        try {
+          await runStep(entry.step, page, options.steps ?? new Map(), ran, entry.params ?? {});
+        } catch (err) {
+          // A preamble that did not work says nothing about the bug.
+          return await fail(
+            { paths, page, repro, reactions, timings: [], startedAt, since: startedAt, expectFixed, notes, baseUrl },
+            {
+              stepId: 'setup',
+              stepIndex: 0,
+              semantic: `shared setup step "${entry.step}"`,
+              kind: 'infrastructure',
+              expected: 'setup to reach the state it promises',
+              observed: err instanceof StepError ? err.message : (err as Error).message,
+            },
+          );
+        }
+      }
+    }
 
     const timings: StepTiming[] = [];
     let stepStart = Date.now();

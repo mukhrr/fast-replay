@@ -44,7 +44,15 @@ export interface StepDefinition {
   ensures?: string;
   /** How long to wait for `ensures`. Preambles are usually the slow part. */
   ensuresTimeoutMs?: number;
-  run(page: Page): Promise<void>;
+  /**
+   * Values this step accepts, with their defaults.
+   *
+   * The common case should need none: `step('signed-in')` uses the stored
+   * account. Pass one only where a bug genuinely differs — signing up fresh,
+   * a particular plan, a specific merchant.
+   */
+  defaults?: Record<string, string>;
+  run(page: Page, params: Record<string, string>): Promise<void>;
 }
 
 export interface LoadedStep extends StepDefinition {
@@ -122,6 +130,7 @@ export async function runStep(
   page: Page,
   steps: Map<string, LoadedStep>,
   alreadyRun = new Set<string>(),
+  params: Record<string, string> = {},
 ): Promise<void> {
   if (alreadyRun.has(name)) return;
   const step = steps.get(name);
@@ -138,7 +147,7 @@ export async function runStep(
     await runStep(dependency, page, steps, alreadyRun);
   }
 
-  await step.run(page);
+  await step.run(page, { ...step.defaults, ...params });
 
   if (step.ensures) {
     try {

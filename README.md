@@ -176,10 +176,17 @@ export default defineStep({
 
 ```ts
 drive: async (page, { step, observe }) => {
-  await step('workspace-chat');   // dependencies run first, once each
+  await step('workspace-chat');                   // uses the stored account
+  await step('new-account', { plan: 'control' }); // when a bug needs something different
   ...
 }
 ```
+
+**Setup is referenced, not recorded.** The IR names the step; replay runs the function. So the recording holds only the bug flow, and fixing a step fixes every repro that uses it — inlined, the preamble is copied into each one and fixing the function fixes none of them.
+
+A step that fails reports as `COULD NOT VERIFY`, by name, with the file it lives in. It never reads as a verdict on the bug, because the flow never reached where the bug lives.
+
+Share the identical part; pass only what genuinely differs. `defaults` keeps the common call empty.
 
 `repro steps` lists what exists, and the MCP server exposes the same list — so an agent checks before writing a fourth sign-in helper.
 
@@ -237,7 +244,7 @@ The CLI and MCP server are both thin wrappers over these.
 ## Develop
 
 ```bash
-npm test          # 153 tests, unit + real-browser integration
+npm test          # 157 tests, unit + real-browser integration
 npm run stress    # records once, replays 20x, fails on a single flake
 npm run demo      # examples/demo-app
 ```

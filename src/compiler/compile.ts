@@ -16,6 +16,8 @@ export interface CompileOptions {
   storageStatePath: string | null;
   /** Evidence the driver declared, which outranks anything derived. */
   observed?: { selector: string; absent: boolean }[];
+  /** Shared setup the driver invoked, recorded by reference. */
+  setup?: { step: string; params?: Record<string, string> }[];
   createdAt?: string;
   waitRules?: WaitRules;
 }
@@ -231,6 +233,7 @@ export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
     startPath: trace.startPath,
     viewport: trace.viewport,
     storageStatePath: options.storageStatePath,
+    setup: options.setup ?? [],
     steps,
     assertion: deriveAssertion(steps, trace, options.observed),
   };

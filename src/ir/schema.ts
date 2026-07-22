@@ -189,6 +189,22 @@ export const ReproSchema = z.object({
   viewport: ViewportSchema,
   /** Project-root-relative, e.g. ".repros/<name>/state.json". Null if nothing worth persisting. */
   storageStatePath: z.string().nullable().default(null),
+  /**
+   * Shared setup run before the recorded steps, by name.
+   *
+   * Referenced rather than recorded, so fixing the step fixes every repro that
+   * uses it. The trade is that a repro is no longer self-contained JSON — it
+   * needs the steps directory. Setup was never portable anyway: it depends on
+   * accounts, data and the app itself.
+   */
+  setup: z
+    .array(
+      z.object({
+        step: z.string().min(1),
+        params: z.record(z.string(), z.string()).optional(),
+      }),
+    )
+    .default([]),
   steps: z.array(StepSchema),
   assertion: AssertionSchema,
 });

@@ -32,6 +32,15 @@ export interface AttachOptions {
 export interface RecordingSession {
   /** Filled in live as events arrive; safe to read after `stopped` resolves. */
   trace: RecordingTrace;
+  /**
+   * Stop and start capture around setup.
+   *
+   * Setup belongs in code, not in the IR. Recorded, it is copied into every
+   * repro that used it — so fixing the shared function would fix none of them,
+   * which is the entire reason to share it.
+   */
+  suspend(): void;
+  resume(): void;
   stopped: Promise<StopReason>;
   stop(reason: StopReason): void;
   detach(): void;
@@ -76,6 +85,7 @@ export async function attachRecorder(
   let resolveStopped: (reason: StopReason) => void = () => {};
   let settled = false;
   let detached = false;
+  let suspended = false;
   const stopped = new Promise<StopReason>((resolve) => {
     resolveStopped = resolve;
   });
@@ -89,7 +99,7 @@ export async function attachRecorder(
   // Guarded on `detached`, not `stop`: the caller deliberately leaves a grace
   // period after stopping so the final action's reaction is not truncated.
   await context.exposeBinding(config.emitBinding, (_source, raw: unknown) => {
-    if (detached) return;
+    if (detached || suspended) return;
     const ev = raw as PageEvent;
     if (!ev || typeof ev !== 'object') return;
     if (ev.kind === 'action') actions.push(ev);
@@ -143,6 +153,12 @@ export async function attachRecorder(
     trace,
     stopped,
     stop,
+    suspend() {
+      suspended = true;
+    },
+    resume() {
+      suspended = false;
+    },
     detach() {
       if (detached) return;
       detached = true;

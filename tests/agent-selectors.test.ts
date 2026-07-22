@@ -17,6 +17,7 @@ interface AgentApi {
   goneSelector(el: Element): string | null;
   accessibleName(el: Element): string;
   getRole(el: Element): string | null;
+  identityOf(el: Element): string | undefined;
 }
 
 declare global {
@@ -33,7 +34,8 @@ beforeAll(async () => {
   bundle = await bundleForPage(`
     import { buildCandidates, semanticOf, appearedSelector, goneSelector } from './selectors.js';
     import { accessibleName, getRole } from './roles.js';
-    (window as any).__agent = { buildCandidates, semanticOf, appearedSelector, goneSelector, accessibleName, getRole };
+    import { identityOf } from './selectors.js';
+    (window as any).__agent = { buildCandidates, semanticOf, appearedSelector, goneSelector, accessibleName, getRole, identityOf };
   `);
 
   browser = await chromium.launch({ headless: true });
@@ -214,6 +216,37 @@ describe('candidate generation', () => {
     const text = candidates.findIndex((c) => c.startsWith('text='));
     expect(css).toBeGreaterThanOrEqual(0);
     if (text >= 0) expect(css).toBeLessThan(text);
+  });
+
+  it('ranks a positional path below text even when anchored on a container', async () => {
+    // Reported as a wrong-answer bug: the anchored-looking path won, drifted a
+    // row on replay, and the tool reported a verdict about the wrong record.
+    const rows = ['alice@example.com', 'bob@example.com', 'carol@example.com']
+      .map((e) => `<div class="ListRow"><div><div><div>x</div><div>${e}</div></div></div></div>`)
+      .join('');
+    await load(`<div data-testid="member-list">${rows}</div>`);
+    const candidates = await page.evaluate(() =>
+      window.__agent.buildCandidates(
+        Array.from(document.querySelectorAll('div')).find((d) => d.textContent === 'bob@example.com')!,
+      ),
+    );
+    const text = candidates.findIndex((c) => c.startsWith('text='));
+    const positional = candidates.findIndex((c) => c.includes(':nth-of-type('));
+    expect(text, 'a text anchor should be offered').toBeGreaterThanOrEqual(0);
+    if (positional >= 0) expect(text).toBeLessThan(positional);
+  });
+
+  it('records an identity that distinguishes one row from the next', async () => {
+    await load(
+      `<ul><li><span>alice@example.com</span><button>Remove</button></li>
+           <li><span>bob@example.com</span><button>Remove</button></li></ul>`,
+    );
+    const identity = await page.evaluate(() =>
+      window.__agent.identityOf(document.querySelectorAll('li button')[1]!),
+    );
+    // "Remove" alone is the same on every row; the row's text is what tells
+    // them apart, and is what replay checks before acting.
+    expect(identity).toContain('bob@example.com');
   });
 
   it('targets the control that handles the click, not its label', async () => {

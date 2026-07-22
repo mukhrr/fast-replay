@@ -17,6 +17,56 @@ export interface Resolved {
   candidateIndex: number;
 }
 
+/**
+ * The selector resolved, but to something that is not what was recorded.
+ *
+ * Distinct from "nothing matched": the app is reachable and the flow could
+ * continue, but continuing would act on the wrong record and produce a verdict
+ * about a bug that was never exercised.
+ */
+export class IdentityMismatchError extends Error {
+  constructor(
+    readonly target: Target,
+    readonly selector: string,
+    readonly found: string,
+  ) {
+    super(
+      `Selector ${selector} matched an element that is not "${target.identity}".\n` +
+        `      Expected to act on: ${target.semantic}\n` +
+        `      Actually found:     ${found || '(no text)'}\n` +
+        `      Acting on it would produce a verdict about the wrong record.`,
+    );
+    this.name = 'IdentityMismatchError';
+  }
+}
+
+/**
+ * Normalised, forgiving comparison.
+ *
+ * Either side containing the other counts: a row's text includes the name plus
+ * whatever else the row renders, and an accessible name is often a fragment of
+ * the visible label. Requiring equality would refuse constantly.
+ */
+export function identityMatches(found: string, identity: string): boolean {
+  const norm = (v: string) => v.replace(/\s+/g, ' ').trim().toLowerCase();
+  const a = norm(found);
+  const b = norm(identity);
+  if (!a || !b) return true;
+  return a.includes(b) || b.includes(a);
+}
+
+/**
+ * Identities too weak to judge by.
+ *
+ * A bare number or a one-word label appears all over a page, so a mismatch
+ * would say nothing — and a check that refuses on noise gets switched off.
+ */
+export function isCheckableIdentity(identity: string | undefined): identity is string {
+  if (!identity) return false;
+  const trimmed = identity.trim();
+  return trimmed.length >= 4 && /[a-z]/i.test(trimmed);
+}
+
 export class TargetResolutionError extends Error {
   constructor(
     readonly target: Target,

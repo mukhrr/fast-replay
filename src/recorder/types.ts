@@ -4,6 +4,7 @@ import type { Action, Author } from '../ir/schema.js';
 export interface CapturedTarget {
   candidates: string[];
   semantic: string;
+  identity?: string;
 }
 
 /** A user action, as captured in the page. */

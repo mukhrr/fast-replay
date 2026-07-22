@@ -36,6 +36,18 @@ export const TargetSchema = z.object({
    * failure messages, and as the re-grounding prompt for Phase 1 self-heal.
    */
   semantic: z.string(),
+  /**
+   * The text that distinguishes this element from its siblings — an accessible
+   * name, its own label, or the row it sits in.
+   *
+   * `semantic` is prose for a human and is never checked, so nothing tied the
+   * action to what it meant. A positional selector that drifted one row matched
+   * a different person's row, the app opened a perfectly valid page for the
+   * wrong record, and the run reported a verdict on the bug. Confident and
+   * wrong is the one outcome this tool must not produce, so replay verifies
+   * this before acting and refuses rather than guesses.
+   */
+  identity: z.string().optional(),
 });
 export type Target = z.infer<typeof TargetSchema>;
 

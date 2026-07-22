@@ -27,6 +27,9 @@ export function isStableToken(t: string): boolean {
   if (!t || t.length > 40) return false;
   if (!/^[a-zA-Z][a-zA-Z0-9_-]*$/.test(t)) return false;
   if (/^(css|sc|emotion|styled|jsx|glamor|makeStyles)-/i.test(t)) return false;
+  // React Native Web namespaces every generated atomic class under `r-`, and
+  // the readable middle of `r-backgroundColor-xmbkpo` hides a hash on the end.
+  if (/^r-/.test(t)) return false;
   if (/[0-9a-f]{6,}/i.test(t)) return false; // embedded hash
   if ((t.match(/\d/g) || []).length >= 3) return false; // numeric noise
   if (/[A-Z]/.test(t) && /\d/.test(t)) return false; // e.g. Button_root__2Xy4z

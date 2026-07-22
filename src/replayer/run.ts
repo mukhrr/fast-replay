@@ -19,6 +19,9 @@ import {
 } from './invariants.js';
 import {
   DEFAULT_RESOLVE_TIMEOUTS,
+  identityMatches,
+  IdentityMismatchError,
+  isCheckableIdentity,
   resolveTarget,
   TargetResolutionError,
   type ResolveTimeouts,
@@ -695,7 +698,10 @@ async function performStep(
   options: RunOptions,
   expand: Expander,
 ): Promise<number> {
-  const timeouts = options.resolveTimeouts ?? DEFAULT_RESOLVE_TIMEOUTS;
+  // Derived from what this step actually measured, not from a constant. A flat
+  // 800ms is wrong by more than an order of magnitude on a heavy app, and
+  // guessing the first budget contradicts the rule every other wait follows.
+  const timeouts = options.resolveTimeouts ?? deriveResolveTimeouts(step);
 
   if (step.action === 'goto') {
     await page.goto(rebase(step.value, baseUrl), { waitUntil: 'domcontentloaded' });
@@ -721,6 +727,31 @@ async function performStep(
   };
   const resolved = await resolveTarget(page, target, timeouts, options.onStepFailure);
   const { locator } = resolved;
+
+  // Confirm the element we found is the one that was recorded, before doing
+  // anything to it. A selector that drifts onto a neighbouring row still
+  // resolves, still clicks, and still produces a well-formed verdict — about
+  // the wrong record.
+  const identity = expand.expand(target.identity);
+  if (isCheckableIdentity(identity)) {
+    // The control's own label and the row it sits in, together. A "Remove"
+    // button reads the same on every row, so its own text can neither confirm
+    // nor deny which record it belongs to — only the row can. Checking just one
+    // of the two would refuse on every correct list row.
+    const found = await locator
+      .evaluate((el) => {
+        const self = (el as HTMLElement).innerText || el.textContent || '';
+        const row = el.closest(
+          'tr, [role="row"], li, [role="listitem"], [data-testid*="row"], [data-testid*="Row"]',
+        );
+        const context = row && row !== el ? ((row as HTMLElement).innerText ?? '') : '';
+        return `${self} ${context}`;
+      })
+      .catch(() => '');
+    if (!identityMatches(found, identity)) {
+      throw new IdentityMismatchError(target, resolved.selector, found.replace(/\s+/g, ' ').trim());
+    }
+  }
 
   switch (step.action) {
     case 'click':
@@ -754,6 +785,21 @@ async function performStep(
   }
 
   return resolved.candidateIndex;
+}
+
+/**
+ * A selector budget proportional to how slowly this app was observed to react.
+ *
+ * A quarter of the step's own wait: long enough for a heavy app to render the
+ * control, short enough that a genuinely missing element fails fast instead of
+ * burning the whole budget on the first of five candidates.
+ */
+function deriveResolveTimeouts(step: Step): ResolveTimeouts {
+  const first = Math.min(
+    15_000,
+    Math.max(DEFAULT_RESOLVE_TIMEOUTS.first, Math.round(step.waitAfter.timeoutMs / 4)),
+  );
+  return { first, subsequent: Math.max(DEFAULT_RESOLVE_TIMEOUTS.subsequent, Math.round(first / 2)) };
 }
 
 /** Re-point a recorded absolute URL at the base URL replay is actually using. */

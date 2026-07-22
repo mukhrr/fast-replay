@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 — 2026-07-22
+
+### Replay refuses to act on the wrong record
+
+A positional selector drifted one row after a list gained an entry. It resolved, it clicked, the app opened a perfectly valid page for the wrong person, and the run reported `BUG DID NOT REPRODUCE` — confident, well-formatted and wrong, on a bug that was never exercised.
+
+Nothing bound the action to what it meant: `semantic` is prose for a human and was never checked. Targets now carry `identity` — the text that distinguishes the element from its siblings, falling back to its row when its own label ("Remove") is shared. Replay verifies it before acting and reports `COULD NOT VERIFY` on a mismatch, which is the answer the tool is already committed to giving when it cannot tell.
+
+### Fixes
+
+- **The selector ladder now matches its documentation.** A path was treated as durable if it merely *started* with an anchor, so `[data-testid="ListRow"] > div > div:nth-of-type(2)` outranked a text anchor — but the test id names the list and the index picks the row, so the whole selector turned on position. Any `:nth-of-type` now ranks below text.
+- **React Native Web atomic classes are rejected outright.** `r-backgroundColor-xmbkpo` reads like a real class and hides a hash on the end; the whole `r-` namespace is generated.
+- **The first selector budget is derived, not guessed.** A flat 800 ms contradicted the rule every other wait follows and was wrong by more than an order of magnitude on a heavy app. It now scales with what the step itself measured.
+
 ## 0.4.2 — 2026-07-22
 
 - **`repro rm <name>`**, and `repro_delete` on the MCP server. Repros are disposable by design and there was no way to dispose of one — you had to know the `.repros/` layout and delete two paths by hand. A verified fix now says so and names the command, and the MCP tool description tells an agent to clean up after confirming its own fix.

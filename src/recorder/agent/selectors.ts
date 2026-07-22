@@ -252,12 +252,17 @@ function interactiveHostSelectors(el: Element): string[] {
   return out;
 }
 
-/** True when the selector's uniqueness rests entirely on :nth-of-type. */
+/**
+ * Does this selector depend on sibling position to find its element?
+ *
+ * An anchor at the front does not redeem it. `[data-testid="ListRow"] > div >
+ * div:nth-of-type(2)` looks anchored, but the test id names the *list* and the
+ * index picks the row — so the whole selector turns on position, and one
+ * inserted row silently points it at somebody else. Any `:nth-of-type` at all
+ * means position is doing work that a text anchor would do by identity.
+ */
 function isPositionalOnly(selector: string | null): boolean {
-  if (!selector) return false;
-  if (!selector.includes(':nth-of-type(')) return false;
-  // An attribute anchor or a surviving class name carries real identity.
-  return !selector.includes('[') && !selector.includes('.');
+  return Boolean(selector?.includes(':nth-of-type('));
 }
 
 /**
@@ -341,9 +346,53 @@ export function semanticOf(el: Element): string {
   return head + contextLabel(el);
 }
 
+/**
+ * The string that tells this element apart from its siblings.
+ *
+ * Checked at replay before acting, so a selector that drifts onto a different
+ * row is caught instead of being acted on. Prefers the element's own label,
+ * then falls back to the row it belongs to — which is what distinguishes one
+ * list entry from the next.
+ */
+export function identityOf(el: Element): string | undefined {
+  const own = accessibleName(el) || renderedText(el, 80);
+
+  // A label shared with other elements cannot tell one from another. "Remove"
+  // is the same on every row of a member list, so identity has to come from
+  // the row instead — which is precisely the case this check exists for.
+  if (own && countSharingLabel(own) <= 1) return own;
+
+  const row = el.closest(
+    'tr, [role="row"], li, [role="listitem"], [data-testid*="row"], [data-testid*="Row"]',
+  );
+  if (row && row !== el) {
+    const rowText = renderedText(row, 80);
+    if (rowText) return rowText;
+  }
+  return own || undefined;
+}
+
+/**
+ * How many elements carry this same label.
+ *
+ * Compares `textContent` rather than `innerText`: this runs over every element
+ * on the page, and `innerText` forces layout on each one.
+ */
+function countSharingLabel(label: string): number {
+  const wanted = label.replace(/\s+/g, ' ').trim();
+  let count = 0;
+  for (const el of allElements()) {
+    const text = (el.textContent ?? '').replace(/\s+/g, ' ').trim();
+    if (text === wanted && ++count > 1) return count;
+    if (el.getAttribute('aria-label')?.trim() === wanted && ++count > 1) return count;
+  }
+  return count;
+}
+
 /** Null when the element has no addressable selector at all. */
 export function describe(el: Element): CapturedTarget | null {
   const candidates = buildCandidates(el);
   if (!candidates.length) return null;
-  return { candidates, semantic: semanticOf(el) };
+  const identity = identityOf(el);
+  return { candidates, semantic: semanticOf(el), ...(identity ? { identity } : {}) };
 }

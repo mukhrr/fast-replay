@@ -3,7 +3,9 @@
 [![CI](https://github.com/mukhrr/fast-replay/actions/workflows/ci.yml/badge.svg)](https://github.com/mukhrr/fast-replay/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/fast-replay)](https://www.npmjs.com/package/fast-replay)
 
-Record a browser bug once. Verify the fix in seconds, with no model in the loop.
+Turn an expensive, unrepeatable setup into a cheap, repeatable question.
+
+Some bugs live behind state you can only create once — a transferred workspace, a consumed invite, a migrated account. Getting there costs half an hour. Checking whether your fix worked should not cost it again. Record the observation once, and you own a few-second check you can run forever, with no model in the loop.
 
 ```
 $ repro run sensor-delete-crash
@@ -123,6 +125,29 @@ Every step records where focus came to rest (`step.focusedAfter`). Nothing asser
 
 Focus restoration (WCAG 2.4.3) leaves no console error, no failed request and no DOM difference, so it is invisible to every other signal — and a deterministic replayer settles it in one line.
 
+## The technique that makes it work
+
+**Do the irreversible part by hand. Record only the observation downstream of it.**
+
+Almost every interesting bug sits behind state you cannot recreate on demand. Transfer the ownership, consume the invite, run the migration — once, manually. Then record the flow that *looks at* the result, which is cheap, deterministic and mutates nothing.
+
+That split is what makes a repro replayable a hundred times, and it turns the single-shot limitation below from a disqualification into a normal part of authoring.
+
+Recording programmatically is a first-class path, not a fallback:
+
+```ts
+import { record } from 'fast-replay';
+
+await record({
+  name: 'transfer-owner-lockout',
+  baseUrl: 'https://staging.example.com',
+  drive: async (page) => {
+    // your setup already needs Playwright locators; reuse them here and
+    // you get a durable artifact for free
+  },
+});
+```
+
 ## Results
 
 Measured on one machine, same flow both ways.
@@ -136,6 +161,8 @@ Measured on one machine, same flow both ways.
 
 10-step flow: 20/20 consecutive replays, slowest 2.77 s.
 
+Read that as the cost of *asking again*, not of the whole job — the setup behind a real bug dwarfs it. The point is that the setup is paid once and the question is paid every time.
+
 The sharper claim is not speed. In a real app it caught a **736–779 ms** window where a total failed to render — a state that heals before a snapshot returns, so a model-in-the-loop tool structurally cannot see it. Two independent first passes with Playwright MCP concluded "no bug" and were wrong.
 
 ## Expectations
@@ -143,9 +170,10 @@ The sharper claim is not speed. In a real app it caught a **736–779 ms** windo
 Honest limits, from six benchmark rounds against two production codebases (React Native Web; React + Vite + Radix):
 
 - **If you already have a Playwright suite, keep using it.** Authoring a spec costs about what recording costs, and a spec is legible where an IR is not. This earns its keep for throwaway repros and agent loops, not as a test framework.
-- **Recording is a human clicking once.** Driving it programmatically means writing Playwright locators, which defeats the point. `repro auto` from a bug description is not built.
+- **You still have to get to the bug yourself.** Recording captures the observation; reaching the state it observes is your problem. `repro auto` from a bug description is not built.
 - **A bug with no console error or failed request needs one hand-written line** — `assertion.expectedWhenFixed` — or `--expect-fixed` refuses to answer rather than return a green that checked nothing.
 - **A flow that mutates server state is single-shot.** Use `--setup` to reset, or `{{random:name}}` placeholders to make inputs unique.
+- **It refuses rather than guesses.** If a selector resolves to something that is not what was recorded — a list that gained a row, so a positional match landed on the wrong record — the run reports `COULD NOT VERIFY` instead of a verdict. A wrong answer you have no reason to doubt is worse than no answer.
 - Top frame only. No iframes. Drag-and-drop and file upload are untested.
 
 ## Programmatic
@@ -162,7 +190,7 @@ The CLI and MCP server are both thin wrappers over these.
 ## Develop
 
 ```bash
-npm test          # 131 tests, unit + real-browser integration
+npm test          # 141 tests, unit + real-browser integration
 npm run stress    # records once, replays 20x, fails on a single flake
 npm run demo      # examples/demo-app
 ```

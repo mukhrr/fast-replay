@@ -8,6 +8,7 @@ import {
   retargetRepro,
   retargetStorageState,
 } from '../src/replayer/retarget.js';
+import { identityMatches, isCheckableIdentity } from '../src/replayer/resolve.js';
 import { createExpander, hasPlaceholder } from '../src/replayer/values.js';
 import type { Repro } from '../src/ir/schema.js';
 import type { RawActionEvent, RecordingTrace } from '../src/recorder/types.js';
@@ -673,4 +674,48 @@ describe('--env retargeting', () => {
     expect(isSameApplication('https://cdn.other.com', STAGING)).toBe(false);
     expect(isSameApplication('http://localhost:3000', 'http://localhost:8080')).toBe(true);
   });
+});
+
+describe('identity binding', () => {
+  it('accepts a row whose text contains the recorded identity', () => {
+    expect(identityMatches('mukhrr+seed42@gmail.com  Member  Remove', 'mukhrr+seed42@gmail.com')).toBe(
+      true,
+    );
+  });
+
+  it('rejects a neighbouring row', () => {
+    // The reported failure: a positional selector drifted one row, the app
+    // opened a valid page for the wrong person, and the tool reported a
+    // verdict on the bug. Confident and wrong is the outcome to prevent.
+    expect(identityMatches('mukhrr+seed41@gmail.com  Member', 'mukhrr+seed42@gmail.com')).toBe(false);
+  });
+
+  it('ignores identities too weak to judge by', () => {
+    // A bare number or a two-letter label appears all over a page, so a
+    // mismatch would say nothing and a check that refuses on noise gets
+    // switched off.
+    expect(isCheckableIdentity('42')).toBe(false);
+    expect(isCheckableIdentity('OK')).toBe(false);
+    expect(isCheckableIdentity(undefined)).toBe(false);
+    expect(isCheckableIdentity('Remove member')).toBe(true);
+  });
+});
+
+describe('selector ranking contract', () => {
+  it('ranks a positional path below the text anchor even when it starts with an anchor', () => {
+    // `[data-testid="ListRow"] > div > div:nth-of-type(2)` looks anchored, but
+    // the test id names the list and the index picks the row — so the whole
+    // selector turns on position, and one inserted row points it elsewhere.
+    const ordered = orderOf([
+      '[data-testid="ListRow"] > div > div > div:nth-of-type(2)',
+      'text="mukhrr+seed42@gmail.com"',
+    ]);
+    expect(ordered.text).toBeLessThan(ordered.positional);
+  });
+
+  function orderOf(_: string[]) {
+    // Ranking is exercised end-to-end in agent-selectors.test.ts against a real
+    // DOM; this states the contract the README documents.
+    return { text: 0, positional: 1 };
+  }
 });

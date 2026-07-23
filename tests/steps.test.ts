@@ -61,6 +61,21 @@ beforeAll(async () => {
      };`,
   );
   await step(
+    'session',
+    `let runs = 0;
+     export default {
+       name: 'session',
+       description: 'Establishes a session (counts its runs on globalThis)',
+       establishesSession: true,
+       ensures: '[data-testid="sensor-list"]',
+       async run(page) {
+         globalThis.__sessionRuns = (globalThis.__sessionRuns ?? 0) + 1;
+         await page.evaluate(() => localStorage.setItem('replay-token', 'ok'));
+         await page.waitForSelector('[data-testid="sensor-list"]');
+       },
+     };`,
+  );
+  await step(
     'lies',
     `export default {
        name: 'lies',
@@ -81,7 +96,13 @@ describe('discovery', () => {
   it('lists what exists, so a fourth sign-in helper does not get written', async () => {
     const { steps, errors } = await loadSteps(stepsDir);
     expect(errors).toEqual([]);
-    expect(Array.from(steps.keys()).sort()).toEqual(['lies', 'named', 'one-added', 'sensors-loaded']);
+    expect(Array.from(steps.keys()).sort()).toEqual([
+      'lies',
+      'named',
+      'one-added',
+      'sensors-loaded',
+      'session',
+    ]);
     expect(steps.get('one-added')?.description).toContain('Probe');
   });
 
@@ -91,7 +112,7 @@ describe('discovery', () => {
     await writeFile(path.join(stepsDir, 'broken.mjs'), 'export default { nope: true };', 'utf8');
     try {
       const { steps, errors } = await loadSteps(stepsDir);
-      expect(steps.size).toBe(4);
+      expect(steps.size).toBe(5);
       expect(errors[0]?.message).toContain('defineStep');
     } finally {
       await rm(path.join(stepsDir, 'broken.mjs'), { force: true });
@@ -147,6 +168,35 @@ describe('running', () => {
     } finally {
       await browser.close();
     }
+  });
+});
+
+describe('a session step runs once, not per replay', () => {
+  it('captures the session at record and skips the step on every replay', async () => {
+    // The reported "multiple sessions": a sign-in setup step re-ran on every
+    // verification and minted a fresh server session each time.
+    (globalThis as unknown as { __sessionRuns: number }).__sessionRuns = 0;
+    await server.reset();
+    await record({
+      name: 'sessioned',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      drive: async (page, { step, observe }) => {
+        await step('session');
+        await observe('[data-testid="sensor-list"]');
+      },
+    });
+    expect((globalThis as unknown as { __sessionRuns: number }).__sessionRuns).toBe(1);
+
+    (globalThis as unknown as { __sessionRuns: number }).__sessionRuns = 0;
+    for (let i = 0; i < 3; i++) {
+      await server.reset();
+      const result = await run({ name: 'sessioned', root });
+      expect(result.passed, `replay ${i + 1}`).toBe(true);
+    }
+    // Zero, because the captured session is restored instead of re-run.
+    expect((globalThis as unknown as { __sessionRuns: number }).__sessionRuns).toBe(0);
   });
 });
 

@@ -213,7 +213,18 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
     // reaches every repro that references it.
     if (repro.setup.length) {
       const ran = new Set<string>();
+      const haveSession = Boolean(storageStatePath(repro, root) || options.profileDir);
       for (const entry of repro.setup) {
+        // A sign-in whose result is already in the restored session must not
+        // run again — that is what minted a fresh server session on every
+        // verification. Skip it only when a session was actually restored;
+        // otherwise fall through and run it, so a repro missing its state file
+        // still works rather than starting logged out.
+        const def = options.steps?.get(entry.step);
+        if (def?.establishesSession && haveSession) {
+          ran.add(entry.step);
+          continue;
+        }
         try {
           await runStep(entry.step, page, options.steps ?? new Map(), ran, entry.params ?? {});
         } catch (err) {

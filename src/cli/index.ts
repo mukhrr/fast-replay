@@ -161,12 +161,12 @@ program
       return;
     }
     const rows: string[][] = [
-      [bold('STEP'), bold('LEAVES YOU'), bold('REQUIRES'), bold('VERIFIED BY')],
+      [bold('STEP'), bold('LEAVES YOU'), bold('KIND'), bold('VERIFIED BY')],
       ...Array.from(steps.values()).map((s) => [
         cyan(s.name),
-        truncate(s.description, 44),
-        (s.requires ?? []).join(', ') || dim('—'),
-        s.ensures ? dim(truncate(s.ensures, 28)) : yellow('nothing'),
+        truncate(s.description, 40),
+        s.establishesSession ? green('session') : dim('setup'),
+        s.ensures ? dim(truncate(s.ensures, 26)) : yellow('nothing'),
       ]),
     ];
     console.log(table(rows));

@@ -69,7 +69,11 @@ export interface RecordingResult {
   observed: { selector: string; absent: boolean }[];
   /** Shared setup the driver invoked, to be referenced rather than recorded. */
   setup: { step: string; params?: Record<string, string> }[];
-  /** Serialized storageState captured at the START of the recording. */
+  /**
+   * Serialized session. Captured at the start of recording, then replaced with
+   * the post-sign-in session once a session-establishing setup step has run —
+   * so replay restores an authenticated state and never re-runs the sign-in.
+   */
   storageState: string;
   stopReason: StopReason;
   /** Set when `drive` threw. The trace up to that point is still usable. */
@@ -124,6 +128,9 @@ export async function launchRecording(
     const observed: { selector: string; absent: boolean }[] = [];
     const setup: { step: string; params?: Record<string, string> }[] = [];
     const ranSteps = new Set<string>();
+    // Overwritten each time a session-establishing step completes, so the final
+    // value is the session as it stood once all sign-in was done.
+    let sessionStorageState: string | null = null;
     const api: DriveApi = {
       async step(name, params) {
         // Nothing setup does belongs in the IR. Recorded, it is copied into
@@ -136,6 +143,9 @@ export async function launchRecording(
           session.resume();
         }
         setup.push({ step: name, ...(params ? { params } : {}) });
+        if (options.steps?.get(name)?.establishesSession) {
+          sessionStorageState = await captureStorageState(context);
+        }
       },
       async observe(selector, opts) {
         const absent = Boolean(opts?.absent);
@@ -188,7 +198,15 @@ export async function launchRecording(
 
     session.detach();
 
-    return { trace: session.trace, storageState, stopReason, driveError, observed, setup };
+    return {
+      trace: session.trace,
+      // The post-sign-in session when there was one, else the starting session.
+      storageState: sessionStorageState ?? storageState,
+      stopReason,
+      driveError,
+      observed,
+      setup,
+    };
   } finally {
     await opened.close();
   }

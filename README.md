@@ -192,7 +192,19 @@ Share the identical part; pass only what genuinely differs. `defaults` keeps the
 
 `ensures` is the part that earns its keep. When the login page moves, one step fails by name and says so; without it, every repro that walked through the preamble fails separately, somewhere further along, looking like unrelated bugs.
 
-**For credentials specifically, prefer not replaying sign-in at all.** `repro record --profile ./.replay-profile` signs in once and reuses the session — faster, less flaky, and no credentials near the IR.
+**A sign-in step should establish the session, not replay itself.** Mark it `establishesSession: true` and it runs once at record time; the session it produces is captured, and every replay restores it and skips the step. Verifying a fix twenty times signs in **zero** times, instead of minting a fresh server session on each run.
+
+```ts
+export default defineStep({
+  name: 'signed-in',
+  description: 'Signed in as the seed account',
+  establishesSession: true,        // runs once; replay restores the session
+  ensures: '[data-testid="home"]',
+  async run(page) { /* ... */ },
+});
+```
+
+(`repro record --profile ./.replay-profile` does the same for a fully manual recording — sign in once by hand, reuse the profile.)
 
 For a repeated verification, keep the app booted between runs:
 

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.0 — 2026-07-23
+
+### A session step runs once, not on every replay
+
+The persistent "multiple sessions" report, finally traced to its cause: setup ran on every `repro run`, so a sign-in setup step re-signed-in on each verification and minted a fresh server session every time — which is precisely what a captured session exists to avoid, now built into the shared-steps feature by mistake.
+
+Measured before: 3 verifications, 3 sign-ins. After: 3 verifications, **0** sign-ins, all passing.
+
+A step can now declare `establishesSession: true`. It runs once at record time, the session it produces is captured as the repro's stored state, and every replay restores that and skips the step. It is skipped only when a session was actually restored, so a repro missing its state file still runs the step rather than starting logged out. Leave the flag off for setup that changes server state — a session snapshot cannot recreate a created record.
+
 ## 0.10.0 — 2026-07-22
 
 ### Setup is referenced, not recorded

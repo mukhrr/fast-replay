@@ -45,6 +45,21 @@ export interface StepDefinition {
   /** How long to wait for `ensures`. Preambles are usually the slow part. */
   ensuresTimeoutMs?: number;
   /**
+   * This step's whole effect is the browser session — signing in, accepting a
+   * cookie banner, anything whose result is captured by cookies, localStorage
+   * or IndexedDB.
+   *
+   * Marked so, it runs once at record time and its result is baked into the
+   * repro's stored session. Replay restores that and skips the step, so
+   * verifying a fix twenty times signs in zero times instead of twenty. This is
+   * the difference between a repro that mints a fresh server session on every
+   * run and one that reuses a single captured one.
+   *
+   * Leave it off for setup that changes server state — creating a record, for
+   * instance — since a session snapshot cannot recreate that.
+   */
+  establishesSession?: boolean;
+  /**
    * Values this step accepts, with their defaults.
    *
    * The common case should need none: `step('signed-in')` uses the stored

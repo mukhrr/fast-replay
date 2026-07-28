@@ -2,6 +2,7 @@
 import path from 'node:path';
 import { Command } from 'commander';
 import {
+  applyExtract,
   assertRepro,
   deleteRepro,
   fixRepro,
@@ -13,6 +14,7 @@ import {
   reproPaths,
   run,
   STOP_HOTKEY,
+  suggestExtractions,
 } from '../api.js';
 import { writeRepro } from '../ir/io.js';
 import { loadSteps, STEPS_DIR } from '../steps.js';
@@ -96,7 +98,7 @@ program
   )
   .option('--profile <dir>', 'replay against a persistent Chromium profile (reuses a login)')
   .option('--setup <command>', 'shell command to reset state before replaying')
-  .option('--reuse', 'keep the app booted between runs; conflicts with --setup', false)
+  .option('--reuse', 'no effect in a one-shot run — use `repro watch` instead', false)
   .option('--timeout-scale <n>', 'multiply every recorded wait; raise on slow machines', '1')
   .option(
     '--resolve-timeout <ms>',
@@ -105,14 +107,13 @@ program
   )
   .description('replay a repro at machine speed and assert the recorded outcome')
   .action(async (name: string, opts) => {
-    if (opts.reuse && opts.setup) {
-      // Undefined behaviour otherwise: the setup wipes state the warm context
-      // is still holding open.
-      throw new Error(
-        '--reuse and --setup cannot be combined: a warm page holds open the very state --setup resets.',
+    if (opts.reuse) {
+      // A one-shot process has nothing to keep warm: it opened a session, ran
+      // once, and closed it — paying an extra browser launch for zero reuse.
+      console.log(
+        dim("  --reuse has nothing to reuse in a one-shot run; use `repro watch` or the MCP server's reuse."),
       );
     }
-    const session = opts.reuse ? await openSession({ name, headed: opts.headed }) : null;
     const first = Number(opts.resolveTimeout);
     if (!Number.isFinite(first) || first <= 0) {
       throw new Error(`Invalid --resolve-timeout "${opts.resolveTimeout}". Expected milliseconds.`);
@@ -126,7 +127,6 @@ program
       profileDir: opts.profile ?? null,
       setupCommand: opts.setup ?? null,
       timeoutScale: Number(opts.timeoutScale) || 1,
-      session,
       // Fallbacks stay cheap probes: half the primary budget.
       resolveTimeouts: { first, subsequent: Math.max(200, Math.round(first / 2)) },
     });
@@ -136,7 +136,6 @@ program
     console.log(dim(`  against ${result.baseUrl}${via}`));
     console.log('');
     result.passed ? reportPass(result) : reportFail(result);
-    await session?.close();
     process.exitCode = result.passed ? 0 : 1;
   });
 
@@ -173,6 +172,75 @@ program
   });
 
 program
+  .command('extract')
+  .description('find setup repeated across repros and extract it into one shared step')
+  .option('--apply <name>', 'write the shared step under this name and rewrite the matched repros')
+  .option('--use <step>', 'convert matching repros onto an existing extracted step instead')
+  .option('--candidate <n>', 'which suggestion to extract', '0')
+  .option('--length <n>', 'take only the first N steps of the prefix')
+  .option('--min-steps <n>', 'shortest prefix worth extracting', '2')
+  .option('--min-repros <n>', 'how many repros must share it', '2')
+  .option('--session', "mark it establishesSession — only when the preamble's whole effect is the browser session", false)
+  .option('--description <text>', 'what state the step leaves you in')
+  .action(async (opts) => {
+    const thresholds = {
+      minSteps: Number(opts.minSteps) || 2,
+      minRepros: Number(opts.minRepros) || 2,
+    };
+
+    if (!opts.apply && !opts.use) {
+      const { suggestions, existing } = await suggestExtractions(thresholds);
+      if (!suggestions.length && !existing.length) {
+        console.log(dim('No repeated prefix across the recorded repros — nothing to extract.'));
+        return;
+      }
+      for (const s of suggestions) {
+        const near = s.inexactRepros.length
+          ? dim(`  (near match: ${s.inexactRepros.join(', ')} — values differ, parameterize by hand)`)
+          : '';
+        console.log(
+          `${bold(`#${s.index}`)}  ${s.stepCount} steps starting at ${cyan(s.startPath)}, shared by ${s.repros.map(cyan).join(', ')}${near}`,
+        );
+        for (const line of s.preview) console.log(dim(`    ${line}`));
+        console.log(
+          dim(`    apply:  repro extract --apply <name>${s.index ? ` --candidate ${s.index}` : ''}`),
+        );
+        console.log('');
+      }
+      for (const m of existing) {
+        for (const r of m.repros) {
+          console.log(
+            `${yellow('!')} ${cyan(r.name)}: its first ${r.length} step(s) re-drive shared step ${cyan(m.step)} — convert with: repro extract --use ${m.step}`,
+          );
+        }
+      }
+      return;
+    }
+
+    const report = await applyExtract({
+      name: opts.apply,
+      useExisting: opts.use,
+      candidate: Number(opts.candidate) || 0,
+      length: opts.length ? Number(opts.length) : undefined,
+      description: opts.description,
+      establishesSession: opts.session,
+      ...thresholds,
+    });
+    if (report.stepFile) {
+      console.log(`  ${green('✓')} wrote ${path.relative(process.cwd(), report.stepFile)}`);
+    }
+    for (const r of report.perRepro) {
+      if (r.skipped) console.log(`  ${yellow('!')} ${cyan(r.name)} skipped — ${r.skipped}`);
+      else for (const c of r.changes) console.log(`  ${green('✓')} ${cyan(r.name)}: ${c}`);
+    }
+    console.log(
+      dim(
+        `  Future recordings: call step('${report.stepName}') in drive() instead of re-driving this preamble.`,
+      ),
+    );
+  });
+
+program
   .command('watch')
   .argument('<name>', 'name of the repro to replay')
   .option('--expect-fixed', 'pass when the bug no longer happens', false)
@@ -181,7 +249,9 @@ program
   .option('--setup <command>', 'shell command to reset state before each replay')
   .description('hold the browser open and replay on demand — for a fix-verify loop')
   .action(async (name: string, opts) => {
-    const session = await openSession({ name, headed: opts.headed });
+    // envUrl retargets the captured session onto the target origin; without it
+    // a watch against --env held a session the target could not see.
+    const session = await openSession({ name, headed: opts.headed, envUrl: opts.env ?? null });
     let runs = 0;
 
     const once = async (): Promise<void> => {

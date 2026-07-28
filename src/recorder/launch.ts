@@ -8,7 +8,7 @@ import {
   verifyInstrumentation,
   type StopReason,
 } from './attach.js';
-import { runStep, type LoadedStep } from '../steps.js';
+import { runStep, transitiveRequires, type LoadedStep } from '../steps.js';
 import type { RecordingTrace } from './types.js';
 
 export interface LaunchRecordingOptions {
@@ -143,7 +143,13 @@ export async function launchRecording(
           session.resume();
         }
         setup.push({ step: name, ...(params ? { params } : {}) });
-        if (options.steps?.get(name)?.establishesSession) {
+        // Sign-in may sit behind the invoked step as a `requires` dependency
+        // rather than being invoked itself, so the whole chain decides whether
+        // this call established a session. Missing it here wrote the
+        // pre-sign-in snapshot to state.json, and every replay signed in again.
+        const steps = options.steps ?? new Map<string, LoadedStep>();
+        const chain = transitiveRequires([name], steps);
+        if (Array.from(chain).some((n) => steps.get(n)?.establishesSession)) {
           sessionStorageState = await captureStorageState(context);
         }
       },

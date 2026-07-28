@@ -59,6 +59,7 @@ describe('mcp server', () => {
     expect(tools.map((t) => t.name).sort()).toEqual([
       'repro_artifacts',
       'repro_delete',
+      'repro_extract',
       'repro_list',
       'repro_run',
       'repro_steps',
@@ -186,6 +187,17 @@ describe('mcp server', () => {
     }
   });
 
+  it('suggests extractions without writing anything', async () => {
+    // Only one repro is recorded, so nothing repeats — and a suggest call must
+    // never create files.
+    const result = await call('repro_extract', {});
+    expect(result.isError).toBeFalsy();
+    expect(result.structuredContent?.suggestions).toEqual([]);
+    expect(result.content[0]?.text).toContain('No repeated prefix');
+    const { existsSync } = await import('node:fs');
+    expect(existsSync(path.join(root, '.repros', 'steps'))).toBe(false);
+  });
+
   it('explains a repro without re-running it', async () => {
     const result = await call('repro_artifacts', { name: 'checkout-crash' });
     const text = result.content.map((c) => c.text ?? '').join('\n');
@@ -193,5 +205,82 @@ describe('mcp server', () => {
     expect(text).toContain('checkout-crash');
     expect(text).toContain('Delete Sensor 2');
     expect(text).toContain('expect-bug');
+  });
+});
+
+describe('warm sessions by default', () => {
+  it('reuses one warm session across calls instead of a fresh browser each time', async () => {
+    // One reported issue means running the same repro many times. Each call
+    // creating and destroying a context was the reported "starts and ends
+    // multiple sessions per issue".
+    await server.reset();
+    await call('repro_run', { name: 'checkout-crash' });
+    const sizeAfterFirst = replay.warmSessions.size;
+    const first = Array.from(replay.warmSessions.values());
+
+    await server.reset();
+    const result = await call('repro_run', { name: 'checkout-crash' });
+    expect(result.structuredContent?.passed).toBe(true);
+    expect(replay.warmSessions.size).toBe(sizeAfterFirst);
+    // Same session object — reused, not reopened.
+    for (const s of first) expect(Array.from(replay.warmSessions.values())).toContain(s);
+  });
+
+  it('revalidates a dead warm session instead of handing it out', async () => {
+    await server.reset();
+    await call('repro_run', { name: 'checkout-crash' });
+    for (const session of replay.warmSessions.values()) await session.page.close();
+
+    await server.reset();
+    const result = await call('repro_run', { name: 'checkout-crash' });
+    expect(result.structuredContent?.passed, JSON.stringify(result.structuredContent)).toBe(true);
+  });
+
+  it('keys warm sessions by what shapes them, not by name alone', async () => {
+    await server.reset();
+    await call('repro_run', { name: 'checkout-crash' });
+    const before = replay.warmSessions.size;
+    // Same repro, different target: must not be handed the existing session.
+    await server.reset();
+    const result = await call('repro_run', { name: 'checkout-crash', base_url: server.baseUrl });
+    expect(result.structuredContent?.passed).toBe(true);
+    expect(replay.warmSessions.size).toBe(before + 1);
+  });
+
+  it('setup_command without explicit reuse opts out of the default, without error', async () => {
+    await server.reset();
+    const before = replay.warmSessions.size;
+    const marker = path.join(root, 'mcp-setup-ran.txt');
+    const result = await call('repro_run', {
+      name: 'checkout-crash',
+      setup_command: `printf ran > ${JSON.stringify(marker)}`,
+    });
+    expect(result.isError).toBeFalsy();
+    expect(replay.warmSessions.size, 'a setup_command call must not warm a session').toBe(before);
+  });
+
+  it('still refuses an explicit reuse combined with setup_command', async () => {
+    const result = await call('repro_run', {
+      name: 'checkout-crash',
+      reuse: true,
+      setup_command: 'true',
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.conflict).toBe('reuse+setup_command');
+  });
+
+  it('closes warm sessions for a repro when it is deleted', async () => {
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const irPath = path.join(root, '.repros/checkout-crash.json');
+    const backup = await readFile(irPath, 'utf8');
+    try {
+      await server.reset();
+      await call('repro_run', { name: 'checkout-crash' });
+      expect(replay.warmSessions.size).toBeGreaterThan(0);
+      await call('repro_delete', { name: 'checkout-crash' });
+      expect(replay.warmSessions.size).toBe(0);
+    } finally {
+      await writeFile(irPath, backup);
+    }
   });
 });

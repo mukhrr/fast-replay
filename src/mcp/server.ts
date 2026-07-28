@@ -2,7 +2,17 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { deleteRepro, list, openSession, readRepro, reproPaths, run } from '../api.js';
+import {
+  applyExtract,
+  deleteRepro,
+  list,
+  openSession,
+  readRepro,
+  reproPaths,
+  run,
+  suggestExtractions,
+  type WarmSession,
+} from '../api.js';
 import { loadSteps, STEPS_DIR } from '../steps.js';
 import { BrowserPool } from '../browser.js';
 import { VERSION } from '../version.js';
@@ -99,9 +109,21 @@ function summarize(result: RunResult, expectFixed: boolean): string {
 
 export interface ReplayServer {
   server: McpServer;
+  /** Warm sessions held across calls, keyed by everything that shapes them. Exposed for tests. */
+  warmSessions: Map<string, WarmSession>;
   /** Closes the browsers held open across calls. */
   dispose(): Promise<void>;
 }
+
+/**
+ * Whether `repro_run` keeps the browser warm between calls when the caller
+ * does not say. One reported issue means running the same repro many times —
+ * confirm, fix, verify, verify again — and a fresh context per call re-paid
+ * the app's whole cold boot each time, which read as "the tool starts and
+ * ends a session on every check". A verification that must stand on its own
+ * passes `reuse: false` explicitly.
+ */
+const REUSE_DEFAULT = true;
 
 export function createServer(root = process.cwd()): McpServer {
   return createReplayServer(root).server;
@@ -122,14 +144,34 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
   const pool = new BrowserPool();
 
   /**
-   * Warm sessions, one per repro.
-   *
-   * This is the caller that runs the same repro dozens of times, so it gains
-   * most from not re-booting the app. Opt-in per call, because reusing a
-   * context carries state between runs and a verification that has to stand on
-   * its own must not.
+   * Warm sessions, keyed by repro name plus everything else that shapes the
+   * context — headed, base_url, env_url, profile_dir. Two calls that differ in
+   * any of those must not share a session: a page warmed for one origin handed
+   * to a run against another is silent cross-deployment carry-over.
    */
-  const warm = new Map<string, Awaited<ReturnType<typeof openSession>>>();
+  const warm = new Map<string, WarmSession>();
+
+  const warmKey = (
+    name: string,
+    o: { headed?: boolean; base_url?: string; env_url?: string; profile_dir?: string },
+  ): string =>
+    JSON.stringify([name, Boolean(o.headed), o.base_url ?? null, o.env_url ?? null, o.profile_dir ?? null]);
+
+  async function acquireWarm(key: string, open: () => Promise<WarmSession>): Promise<WarmSession> {
+    const existing = warm.get(key);
+    if (existing) {
+      // Revalidate the way BrowserPool.acquire does: a crashed or closed
+      // context handed out again fails the run for reasons unrelated to the
+      // bug. A persistent context has no browser() — the page check decides.
+      const alive = !existing.page.isClosed() && (existing.context.browser()?.isConnected() ?? true);
+      if (alive) return existing;
+      warm.delete(key);
+      await existing.close().catch(() => {});
+    }
+    const fresh = await open();
+    warm.set(key, fresh);
+    return fresh;
+  }
 
   server.registerTool(
     'repro_run',
@@ -178,12 +220,14 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
           .boolean()
           .optional()
           .describe(
-            'Keep the browser page open between calls so the app stays booted. Much faster on a heavy app when verifying the same repro repeatedly, but state carries over between runs — do not combine with setup_command, and do not use it for a verification that must stand on its own.',
+            'Keep the browser page open between calls so the app stays booted. This is the DEFAULT: one issue means many runs of the same repro, and re-booting the app each time is the slow part. ' +
+              'State carries over between runs, so pass false for a verification that must stand on its own (e.g. a final expect_fixed check). ' +
+              'Passing setup_command without reuse also runs fresh; combining setup_command with an explicit reuse: true is an error.',
           ),
       },
     },
     async ({ name, expect_fixed = false, base_url, env_url, headed, profile_dir, setup_command, timeout_scale, reuse }) => {
-      if (reuse && setup_command) {
+      if (reuse === true && setup_command) {
         return {
           content: [
             {
@@ -197,18 +241,32 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
           structuredContent: { name, passed: false, conflict: 'reuse+setup_command' },
         };
       }
-      let session = reuse ? warm.get(name) : undefined;
-      if (reuse && !session) {
-        session = await openSession({ name, root, headed: Boolean(headed) });
-        warm.set(name, session);
+      // setup_command resets state a warm page would hold open, so unless the
+      // caller explicitly asked for reuse it opts the call out of the default.
+      const wantWarm = reuse ?? (setup_command ? false : REUSE_DEFAULT);
+      let session: WarmSession | null = null;
+      if (wantWarm) {
+        session = await acquireWarm(warmKey(name, { headed, base_url, env_url, profile_dir }), async () =>
+          openSession({
+            name,
+            root,
+            headed: Boolean(headed),
+            envUrl: env_url ?? null,
+            profileDir: profile_dir ?? null,
+            // The warm context lives inside the pooled browser, so holding a
+            // session open does not hold a second Chromium open.
+            browser: profile_dir ? null : await pool.acquire(!headed),
+          }),
+        );
       }
       const result = await run({
         name,
         root,
         expectFixed: expect_fixed,
         captureFinalScreenshot: true,
-        // A persistent profile owns its own process and cannot share the pool.
-        ...(profile_dir ? {} : { browser: await pool.acquire(!headed) }),
+        // A persistent profile owns its own process and cannot share the pool;
+        // a warm session already sits inside the pooled browser.
+        ...(profile_dir || session ? {} : { browser: await pool.acquire(!headed) }),
         ...(headed ? { headed: true } : {}),
         ...(profile_dir ? { profileDir: profile_dir } : {}),
         ...(setup_command ? { setupCommand: setup_command } : {}),
@@ -285,7 +343,117 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
               : `No shared steps yet. Add one at ${STEPS_DIR}/<name>.mjs with a default export from defineStep().`,
           },
         ],
-        structuredContent: { steps: Array.from(steps.values()).map(({ run, ...rest }) => rest), errors },
+        structuredContent: {
+          // `run` is a function and `fragment` is replay payload — neither
+          // belongs in a listing meant for choosing between steps.
+          steps: Array.from(steps.values()).map(({ run, fragment, ...rest }) => rest),
+          errors,
+        },
+      };
+    },
+  );
+
+  server.registerTool(
+    'repro_extract',
+    {
+      title: 'Extract repeated setup into a shared step',
+      description:
+        'Find step sequences that repeat at the start of multiple recorded repros — the sign-in, the navigation to the screen — ' +
+        'and extract them into one shared setup step, so the next repro references it instead of re-recording it. ' +
+        'Call WITHOUT name to see candidates; nothing is written. Call with name to apply one: it writes .repros/steps/<name>.mjs ' +
+        'and rewrites the matched repros to reference it. Choosing a candidate and naming the step is your judgement — ' +
+        'this tool only does the structural matching. Call it after finishing an issue so the next one starts faster.',
+      inputSchema: {
+        name: z
+          .string()
+          .optional()
+          .describe('Name for the new shared step. Omit to only list candidates.'),
+        candidate: z
+          .number()
+          .optional()
+          .describe('Which candidate to extract — the index from the suggest call. Default 0.'),
+        length: z.number().optional().describe('Take only the first N steps of the candidate prefix.'),
+        use_existing: z
+          .string()
+          .optional()
+          .describe('Convert matching repros onto this existing extracted step instead of writing a new one.'),
+        establishes_session: z
+          .boolean()
+          .optional()
+          .describe(
+            "Mark the step establishesSession: it runs once at record time and the captured session is restored on every replay. Only when the preamble's whole effect is the browser session (e.g. sign-in).",
+          ),
+        description: z.string().optional().describe('What state the step leaves you in.'),
+        min_steps: z.number().optional().describe('Shortest prefix worth extracting (default 2).'),
+        min_repros: z.number().optional().describe('How many repros must share it (default 2).'),
+      },
+    },
+    async ({ name, candidate, length, use_existing, establishes_session, description, min_steps, min_repros }) => {
+      if (!name && !use_existing) {
+        const { suggestions, existing } = await suggestExtractions({
+          root,
+          minSteps: min_steps,
+          minRepros: min_repros,
+        });
+        const lines = suggestions.map(
+          (s) =>
+            `#${s.index}: ${s.stepCount} steps starting at ${s.startPath}, shared by ${s.repros.join(', ')}` +
+            (s.inexactRepros.length
+              ? ` (near match, values differ: ${s.inexactRepros.join(', ')})`
+              : '') +
+            '\n' +
+            s.preview.map((p) => `    ${p}`).join('\n'),
+        );
+        for (const m of existing) {
+          for (const r of m.repros) {
+            lines.push(
+              `${r.name}: its first ${r.length} step(s) re-drive shared step "${m.step}" — convert with use_existing`,
+            );
+          }
+        }
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: lines.length
+                ? lines.join('\n')
+                : 'No repeated prefix across the recorded repros — nothing to extract.',
+            },
+          ],
+          structuredContent: {
+            suggestions: suggestions.map(({ candidate: _full, ...rest }) => rest),
+            existing,
+          },
+        };
+      }
+
+      const report = await applyExtract({
+        name,
+        root,
+        candidate,
+        length,
+        useExisting: use_existing,
+        establishesSession: establishes_session,
+        description,
+        minSteps: min_steps,
+        minRepros: min_repros,
+      });
+      const lines = [
+        report.stepFile
+          ? `wrote ${report.stepFile}`
+          : `converted matching repros onto existing step "${report.stepName}"`,
+        ...report.perRepro.map((r) =>
+          r.skipped ? `${r.name}: skipped — ${r.skipped}` : `${r.name}: ${r.changes.join('; ')}`,
+        ),
+        `Future recordings: call step('${report.stepName}') in drive() instead of re-driving this preamble.`,
+      ];
+      return {
+        content: [{ type: 'text' as const, text: lines.join('\n') }],
+        structuredContent: {
+          stepFile: report.stepFile,
+          stepName: report.stepName,
+          perRepro: report.perRepro,
+        },
       };
     },
   );
@@ -303,6 +471,14 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
       },
     },
     async ({ name }) => {
+      // A deleted repro's warm session would otherwise hold its context open
+      // for the life of the server.
+      for (const [key, session] of Array.from(warm)) {
+        if ((JSON.parse(key) as unknown[])[0] === name) {
+          warm.delete(key);
+          await session.close().catch(() => {});
+        }
+      }
       const existed = await deleteRepro(name, root);
       return {
         content: [
@@ -426,6 +602,7 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
 
   return {
     server,
+    warmSessions: warm,
     dispose: async () => {
       await Promise.all(Array.from(warm.values()).map((s) => s.close().catch(() => {})));
       warm.clear();

@@ -104,6 +104,17 @@ export interface StorageState {
 }
 
 /**
+ * Does this snapshot actually hold a session?
+ *
+ * A state file with no cookies and no origins restores nothing. Treating its
+ * mere existence as "we have a session" made replay skip the sign-in step and
+ * run logged out.
+ */
+export function storageStateHasContent(state: StorageState): boolean {
+  return Boolean(state.cookies?.length) || Boolean(state.origins?.length);
+}
+
+/**
  * Move a captured session onto the target origin.
  *
  * Cookies and localStorage are keyed by origin, so a state file restored as-is

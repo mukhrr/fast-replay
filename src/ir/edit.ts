@@ -54,7 +54,7 @@ function removeSelector(step: Step, selector: string): boolean {
 }
 
 /** Step ids are positional, so a structural edit must renumber to stay honest. */
-function renumberSteps(repro: Repro): void {
+export function renumberSteps(repro: Repro): void {
   repro.steps.forEach((step, i) => {
     step.id = `s${i + 1}`;
   });

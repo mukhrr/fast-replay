@@ -394,6 +394,41 @@ describe('held-open session', () => {
     }
   });
 
+  it('retargets the captured session when opened against another deployment', async () => {
+    // A session is origin-keyed. A warm session opened for --env used to seed
+    // the recorded origin's cookies as-is, so the target saw a signed-out
+    // browser while replay believed a session existed.
+    const { openSession } = await import('../src/api.js');
+    await recordFlow('warm-env');
+    await writeFile(
+      reproPaths('warm-env', root).storageState,
+      JSON.stringify({
+        cookies: [
+          {
+            name: 'tok',
+            value: '1',
+            domain: 'localhost',
+            path: '/',
+            expires: -1,
+            httpOnly: false,
+            secure: false,
+            sameSite: 'Lax',
+          },
+        ],
+        origins: [],
+      }),
+      'utf8',
+    );
+    const session = await openSession({ name: 'warm-env', root, envUrl: 'http://127.0.0.1:5999' });
+    try {
+      const state = await session.context.storageState();
+      expect(state.cookies.map((c) => c.domain)).toContain('127.0.0.1');
+      expect(state.cookies.map((c) => c.domain)).not.toContain('localhost');
+    } finally {
+      await session.close();
+    }
+  });
+
   it('does not accumulate listeners across replays', async () => {
     // Reaction listeners are attached per run. A fresh context throws them away
     // with itself; a reused one would gather a set on every replay, so the same

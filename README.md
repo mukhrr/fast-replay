@@ -206,13 +206,30 @@ export default defineStep({
 
 (`repro record --profile ./.replay-profile` does the same for a fully manual recording — sign in once by hand, reuse the profile.)
 
+### Extracting a shared step from existing repros
+
+The steps above assume you noticed the repetition up front. `repro extract` finds it after the fact:
+
+```bash
+repro extract                     # list step sequences repeated across repros; writes nothing
+repro extract --apply signed-in   # write .repros/steps/signed-in.mjs, rewrite the matched repros
+```
+
+Detection is structural — steps match on what they do, with volatile identifiers (row numbers, uuids, tokens) masked — and only a true prefix qualifies, because setup replays before recorded steps. A repro that matches only after masking (same shape, different values) is reported but never rewritten: parameterize it by hand. Naming the step, and judging whether it deserves `--session` (`establishesSession`), stays with you.
+
+The generated step embeds its steps as plain IR and replays them through the ordinary machinery — candidate ladder, identity checks, recorded waits (`replayFragment`). Edit selectors in the file like any IR, or replace `run()` with hand-written Playwright when you outgrow the recording.
+
+Recorded the same preamble again by hand? `repro extract` notices the new recording re-drives an existing extracted step and offers `repro extract --use <step>` to convert it instead of writing a duplicate. The MCP server exposes the same flow as `repro_extract`, so an agent can tidy up after finishing an issue and the next issue starts faster.
+
+To reuse a *session* across repros without extracting anything, seed the next recording from an existing one: `repro record next-bug --storage-state .repros/prev-bug/state.json`.
+
 For a repeated verification, keep the app booted between runs:
 
 ```bash
-repro run my-bug --reuse          # or `repro watch my-bug` to replay on Enter
+repro watch my-bug                # hold the browser open, replay on Enter
 ```
 
-Cold boot is over half the wall clock on a heavy app. `--reuse` trades isolation for that, so it conflicts with `--setup` and refuses rather than behaving unpredictably.
+Cold boot is over half the wall clock on a heavy app. The MCP server keeps the browser warm **by default**: one issue means many `repro_run` calls against the same repro, so the page is held open between them. Reuse trades isolation for that speed — pass `reuse: false` for a verification that must stand on its own, and a call with `setup_command` opts out by itself (a warm page holds open the very state the command resets).
 
 ## Results
 
@@ -256,7 +273,7 @@ The CLI and MCP server are both thin wrappers over these.
 ## Develop
 
 ```bash
-npm test          # 157 tests, unit + real-browser integration
+npm test          # 189 tests, unit + real-browser integration
 npm run stress    # records once, replays 20x, fails on a single flake
 npm run demo      # examples/demo-app
 ```

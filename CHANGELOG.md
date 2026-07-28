@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.12.0 — 2026-07-28
+
+### One session per issue, actually
+
+0.11.0 skipped a session-establishing step only when it was named in `setup[]` directly. Reached through another step's `requires` — the README's own canonical shape — it re-ran on every replay; and at record time only the invoked name was checked, so sign-in-as-dependency left the **pre**-sign-in snapshot in `state.json`, an empty session whose mere existence then satisfied the "have a session" check and skipped sign-in into a logged-out replay. Both ends now walk the whole `requires` closure, and a state file with no cookies and no origins no longer counts as a session.
+
+Warm sessions get the same seeding a fresh context does: `openSession` restores — and under `--env`, retargets — the captured session, so `repro watch --env` starts authenticated instead of signed out. The MCP server keys warm sessions by everything that shapes them (headed, base_url, env_url, profile_dir), revalidates a dead one instead of handing it out, opens warm contexts inside the pooled browser rather than holding a second Chromium, and closes a repro's warm sessions when the repro is deleted. A step file that fails to load is now named in the setup failure, instead of a bare "not defined" that silently disabled the session skip.
+
+### The MCP server keeps the browser warm by default
+
+`repro_run` now defaults `reuse: true`. One reported issue means running the same repro many times — confirm the bug, fix, verify, verify again — and a fresh context per call re-paid the app's whole cold boot each time, which read as the tool starting and ending a session on every check. Pass `reuse: false` for a verification that must stand on its own. A call with `setup_command` opts out automatically; only an explicit `reuse: true` beside it is an error. CLI `repro run --reuse` is retired to a hint — a one-shot process has nothing to keep warm; `repro watch` and the MCP server are the paths that amortise.
+
+### `repro extract` — the repetitive steps of past issues become the setup of the next one
+
+Repros against the same app open with the same walk, and until now each recording re-drove it and each copy rotted separately. `repro extract` finds recorded step sequences repeated across repros and extracts them into one shared step; the MCP `repro_extract` is the same flow for an agent finishing an issue.
+
+The contract follows the house rules. Detection is structural — steps match on action, target and value with volatile identifiers masked, never on prose — so no model is involved. Suggest mode writes nothing. Apply is explicit, takes the caller's name for the step, rewrites only repros whose prefix matches on **raw** values (a masked-only match is reported for hand parameterization, never rewritten), and re-verifies against the IR on disk at apply time. Only a true prefix qualifies, because setup replays before recorded steps.
+
+The generated step embeds its fragment as plain IR and replays it with `replayFragment`, through the same candidate ladder, identity checks and recorded waits as any repro — not generated Playwright code that would lose them. A later recording that re-drives an extracted preamble by hand is recognized against the step's fragment and converted with `--use`, instead of a duplicate being written.
+
 ## 0.11.0 — 2026-07-23
 
 ### A session step runs once, not on every replay

@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -76,6 +76,16 @@ beforeAll(async () => {
      };`,
   );
   await step(
+    'chatting',
+    `export default {
+       name: 'chatting',
+       description: 'On the sensors list, signed in via the session dependency',
+       requires: ['session'],
+       ensures: '[data-testid="sensor-list"]',
+       async run(page) { await page.waitForSelector('[data-testid="sensor-list"]'); },
+     };`,
+  );
+  await step(
     'lies',
     `export default {
        name: 'lies',
@@ -97,6 +107,7 @@ describe('discovery', () => {
     const { steps, errors } = await loadSteps(stepsDir);
     expect(errors).toEqual([]);
     expect(Array.from(steps.keys()).sort()).toEqual([
+      'chatting',
       'lies',
       'named',
       'one-added',
@@ -112,7 +123,7 @@ describe('discovery', () => {
     await writeFile(path.join(stepsDir, 'broken.mjs'), 'export default { nope: true };', 'utf8');
     try {
       const { steps, errors } = await loadSteps(stepsDir);
-      expect(steps.size).toBe(5);
+      expect(steps.size).toBe(6);
       expect(errors[0]?.message).toContain('defineStep');
     } finally {
       await rm(path.join(stepsDir, 'broken.mjs'), { force: true });
@@ -198,6 +209,57 @@ describe('a session step runs once, not per replay', () => {
     // Zero, because the captured session is restored instead of re-run.
     expect((globalThis as unknown as { __sessionRuns: number }).__sessionRuns).toBe(0);
   });
+
+  it('skips a session step reached through requires, not just one invoked directly', async () => {
+    // The dependency edge was the leak: `chatting` requires `session`, so the
+    // sign-in never appears in setup[] under its own name — and replay re-ran
+    // it on every verification.
+    (globalThis as unknown as { __sessionRuns: number }).__sessionRuns = 0;
+    await server.reset();
+    await record({
+      name: 'sessioned-via-requires',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      drive: async (page, { step, observe }) => {
+        await step('chatting');
+        await observe('[data-testid="sensor-list"]');
+      },
+    });
+    expect((globalThis as unknown as { __sessionRuns: number }).__sessionRuns).toBe(1);
+    // The captured state must be the post-sign-in one, not the boot snapshot.
+    const state = await readFile(
+      path.join(root, '.repros/sessioned-via-requires/state.json'),
+      'utf8',
+    );
+    expect(state).toContain('replay-token');
+
+    (globalThis as unknown as { __sessionRuns: number }).__sessionRuns = 0;
+    for (let i = 0; i < 3; i++) {
+      await server.reset();
+      const result = await run({ name: 'sessioned-via-requires', root });
+      expect(result.passed, `replay ${i + 1}`).toBe(true);
+    }
+    expect((globalThis as unknown as { __sessionRuns: number }).__sessionRuns).toBe(0);
+  });
+
+  it('does not let an empty state file masquerade as a session', async () => {
+    // A state file with nothing in it restores nothing. Skipping sign-in on
+    // its existence alone replayed logged out.
+    const statePath = path.join(root, '.repros/sessioned/state.json');
+    const original = await readFile(statePath, 'utf8');
+    await writeFile(statePath, JSON.stringify({ cookies: [], origins: [] }), 'utf8');
+    try {
+      (globalThis as unknown as { __sessionRuns: number }).__sessionRuns = 0;
+      await server.reset();
+      const result = await run({ name: 'sessioned', root });
+      expect(result.passed, JSON.stringify(result.failure)).toBe(true);
+      // The step must actually run this time — there is no session to restore.
+      expect((globalThis as unknown as { __sessionRuns: number }).__sessionRuns).toBe(1);
+    } finally {
+      await writeFile(statePath, original, 'utf8');
+    }
+  });
 });
 
 describe('setup is referenced, not recorded', () => {
@@ -248,6 +310,28 @@ describe('setup is referenced, not recorded', () => {
       expect(result.failure?.semantic).toContain('lies');
     } finally {
       await writeFile(irPath, original);
+    }
+  });
+
+  it('names the file when a referenced step failed to load, not just "not defined"', async () => {
+    // A broken .mjs used to reduce to a bare not-defined — and silently
+    // disabled the session skip for whatever that file defined.
+    await server.reset();
+    await writeFile(path.join(stepsDir, 'from-broken.mjs'), 'export default {{{ nope', 'utf8');
+    const irPath = path.join(root, '.repros/referenced.json');
+    const original = await readFile(irPath, 'utf8');
+    const broken = JSON.parse(original);
+    broken.setup = [{ step: 'from-broken' }];
+    await writeFile(irPath, JSON.stringify(broken, null, 2));
+
+    try {
+      const result = await run({ name: 'referenced', root });
+      expect(result.passed).toBe(false);
+      expect(result.failure?.kind).toBe('infrastructure');
+      expect(result.failure?.observed).toContain('from-broken.mjs');
+    } finally {
+      await writeFile(irPath, original);
+      await rm(path.join(stepsDir, 'from-broken.mjs'), { force: true });
     }
   });
 

@@ -17,17 +17,15 @@ import {
   hasFixCriterion,
   type InvariantViolation,
 } from './invariants.js';
+import { IdentityMismatchError, TargetResolutionError, type ResolveTimeouts } from './resolve.js';
+import { performStep, rebase } from './perform.js';
+import { runStep, StepError, transitiveRequires, type LoadedStep } from '../steps.js';
 import {
-  DEFAULT_RESOLVE_TIMEOUTS,
-  identityMatches,
-  IdentityMismatchError,
-  isCheckableIdentity,
-  resolveTarget,
-  TargetResolutionError,
-  type ResolveTimeouts,
-} from './resolve.js';
-import { runStep, StepError, type LoadedStep } from '../steps.js';
-import { retargetRepro, retargetStorageState, type StorageState } from './retarget.js';
+  retargetRepro,
+  retargetStorageState,
+  storageStateHasContent,
+  type StorageState,
+} from './retarget.js';
 import { createExpander, type Expander } from './values.js';
 import { waitForReaction } from './waits.js';
 
@@ -157,11 +155,17 @@ export interface RunOptions {
   envUrl?: string | null;
   /** Shared setup steps, so a repro's `setup` references can be executed. */
   steps?: Map<string, LoadedStep>;
+  /**
+   * Step files that failed to load, surfaced when setup fails.
+   *
+   * Without this a broken `.mjs` reduced to a bare "step is not defined" — and
+   * silently disabled the session skip for whatever the file defined.
+   */
+  stepErrors?: { file: string; message: string }[];
 }
 
 export async function runRepro(input: Repro, options: RunOptions = {}): Promise<RunResult> {
   const root = options.root ?? process.cwd();
-  const recordedBaseUrl = input.baseUrl;
   const repro = options.envUrl ? retargetRepro(input, options.envUrl) : input;
   const baseUrl = options.envUrl ?? options.baseUrl ?? repro.baseUrl;
   const paths = reproPaths(repro.name, root);
@@ -176,24 +180,15 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
     await execAsync(options.setupCommand);
   }
 
-  const sessionPath = options.profileDir ? null : storageStatePath(repro, root);
+  const seed = resolveSessionSeed(input, root, options);
   const reused = options.session ?? null;
   const opened = reused
     ? { context: reused.context, page: reused.page, persistent: false, close: async () => {} }
     : await openBrowser({
-    headless: !options.headed,
-    viewport: repro.viewport,
-    storageStatePath: options.envUrl ? null : sessionPath,
-    // A session is origin-keyed, so restoring it unchanged would authenticate
-    // the environment it was recorded against and leave the target signed out.
-    storageState:
-      options.envUrl && sessionPath
-        ? (retargetStorageState(
-            JSON.parse(readFileSync(sessionPath, 'utf8')) as StorageState,
-            recordedBaseUrl,
-            options.envUrl,
-          ) as Record<string, unknown>)
-        : null,
+        headless: !options.headed,
+        viewport: repro.viewport,
+        storageStatePath: seed.storageStatePath,
+        storageState: seed.storageState,
         profileDir: options.profileDir ?? null,
         // A persistent profile owns its own process, so it cannot share one.
         browser: options.profileDir ? null : (options.browser ?? null),
@@ -212,21 +207,28 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
     // Setup runs as code, not as replayed clicks, so a fix to a shared step
     // reaches every repro that references it.
     if (repro.setup.length) {
+      const steps = options.steps ?? new Map<string, LoadedStep>();
       const ran = new Set<string>();
       const haveSession = Boolean(storageStatePath(repro, root) || options.profileDir);
-      for (const entry of repro.setup) {
-        // A sign-in whose result is already in the restored session must not
-        // run again — that is what minted a fresh server session on every
-        // verification. Skip it only when a session was actually restored;
-        // otherwise fall through and run it, so a repro missing its state file
-        // still works rather than starting logged out.
-        const def = options.steps?.get(entry.step);
-        if (def?.establishesSession && haveSession) {
-          ran.add(entry.step);
-          continue;
+      // A sign-in whose result is already in the restored session must not run
+      // again — that is what minted a fresh server session on every
+      // verification. It can hide anywhere in the chain, not just among the
+      // entries listed here: `workspace-chat` requiring `signed-in` re-signed-in
+      // on every replay until the whole `requires` closure was walked. Skip only
+      // when a session was actually restored; otherwise fall through and run it,
+      // so a repro missing its state file still works rather than starting
+      // logged out.
+      if (haveSession) {
+        for (const name of transitiveRequires(
+          repro.setup.map((entry) => entry.step),
+          steps,
+        )) {
+          if (steps.get(name)?.establishesSession) ran.add(name);
         }
+      }
+      for (const entry of repro.setup) {
         try {
-          await runStep(entry.step, page, options.steps ?? new Map(), ran, entry.params ?? {});
+          await runStep(entry.step, page, steps, ran, entry.params ?? {});
         } catch (err) {
           // A preamble that did not work says nothing about the bug.
           return await fail(
@@ -237,7 +239,12 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
               semantic: `shared setup step "${entry.step}"`,
               kind: 'infrastructure',
               expected: 'setup to reach the state it promises',
-              observed: err instanceof StepError ? err.message : (err as Error).message,
+              observed:
+                (err instanceof StepError ? err.message : (err as Error).message) +
+                (options.stepErrors?.length
+                  ? `\n      ${options.stepErrors.length} step file(s) failed to load:\n` +
+                    options.stepErrors.map((e) => `      ${e.file}: ${e.message}`).join('\n')
+                  : ''),
             },
           );
         }
@@ -590,7 +597,42 @@ function storageStatePath(repro: Repro, root: string): string | null {
   if (!repro.storageStatePath) return null;
   const abs = path.resolve(root, repro.storageStatePath);
   // A deleted state file should degrade to a clean session, not crash the run.
-  return existsSync(abs) ? abs : null;
+  if (!existsSync(abs)) return null;
+  // So should an empty or corrupt one: it restores nothing, and counting it as
+  // a session skips the sign-in step and replays logged out.
+  try {
+    const state = JSON.parse(readFileSync(abs, 'utf8')) as StorageState;
+    return storageStateHasContent(state) ? abs : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Decide how a context should be seeded with the repro's captured session.
+ *
+ * Shared by `runRepro` and `openSession` so a warm session is seeded — and
+ * retargeted under `envUrl` — exactly like a fresh one. `repro` must be the
+ * repro as recorded: its `baseUrl` is the origin the session belongs to.
+ */
+export function resolveSessionSeed(
+  repro: Repro,
+  root: string,
+  options: { envUrl?: string | null; profileDir?: string | null },
+): { storageStatePath: string | null; storageState: Record<string, unknown> | null } {
+  const sessionPath = options.profileDir ? null : storageStatePath(repro, root);
+  if (!sessionPath) return { storageStatePath: null, storageState: null };
+  if (!options.envUrl) return { storageStatePath: sessionPath, storageState: null };
+  // A session is origin-keyed, so restoring it unchanged would authenticate
+  // the environment it was recorded against and leave the target signed out.
+  return {
+    storageStatePath: null,
+    storageState: retargetStorageState(
+      JSON.parse(readFileSync(sessionPath, 'utf8')) as StorageState,
+      repro.baseUrl,
+      options.envUrl,
+    ) as Record<string, unknown>,
+  };
 }
 
 interface FailContext {
@@ -750,142 +792,3 @@ function expectationOf(step: Step): string {
   return parts.length ? parts.join(', ') : 'the step to complete';
 }
 
-/** Performs one step; returns which candidate selector worked (-1 when targetless). */
-async function performStep(
-  page: Page,
-  step: Step,
-  baseUrl: string,
-  options: RunOptions,
-  expand: Expander,
-): Promise<number> {
-  // Derived from what this step actually measured, not from a constant. A flat
-  // 800ms is wrong by more than an order of magnitude on a heavy app, and
-  // guessing the first budget contradicts the rule every other wait follows.
-  const timeouts = options.resolveTimeouts ?? deriveResolveTimeouts(step);
-
-  if (step.action === 'goto') {
-    await page.goto(rebase(step.value, baseUrl), { waitUntil: 'domcontentloaded' });
-    return -1;
-  }
-
-  if (step.action === 'scroll' && !step.target) {
-    const { x, y } = parsePosition(step.value);
-    await page.evaluate(([px, py]) => window.scrollTo(px as number, py as number), [x, y]);
-    return -1;
-  }
-
-  if (step.action === 'offline') {
-    await page.context().setOffline(step.value === 'true');
-    return -1;
-  }
-
-  if (step.action === 'press' && !step.target) {
-    await page.keyboard.press(step.value ?? 'Enter');
-    return -1;
-  }
-
-  if (!step.target) throw new Error(`Step ${step.id} (${step.action}) has no target to act on.`);
-
-  const target = {
-    ...step.target,
-    candidates: expand.expandAll(step.target.candidates) ?? step.target.candidates,
-  };
-  const resolved = await resolveTarget(page, target, timeouts, options.onStepFailure);
-  const { locator } = resolved;
-
-  // Confirm the element we found is the one that was recorded, before doing
-  // anything to it. A selector that drifts onto a neighbouring row still
-  // resolves, still clicks, and still produces a well-formed verdict — about
-  // the wrong record.
-  const identity = expand.expand(target.identity);
-  if (isCheckableIdentity(identity)) {
-    // The control's own label and the row it sits in, together. A "Remove"
-    // button reads the same on every row, so its own text can neither confirm
-    // nor deny which record it belongs to — only the row can. Checking just one
-    // of the two would refuse on every correct list row.
-    const found = await locator
-      .evaluate((el) => {
-        const self = (el as HTMLElement).innerText || el.textContent || '';
-        const row = el.closest(
-          'tr, [role="row"], li, [role="listitem"], [data-testid*="row"], [data-testid*="Row"]',
-        );
-        const context = row && row !== el ? ((row as HTMLElement).innerText ?? '') : '';
-        return `${self} ${context}`;
-      })
-      .catch(() => '');
-    if (!identityMatches(found, identity)) {
-      throw new IdentityMismatchError(target, resolved.selector, found.replace(/\s+/g, ' ').trim());
-    }
-  }
-
-  switch (step.action) {
-    case 'click':
-      await locator.click();
-      break;
-    case 'rightclick':
-      await locator.click({ button: 'right' });
-      break;
-    case 'dblclick':
-      await locator.dblclick();
-      break;
-    case 'hover':
-      await locator.hover();
-      break;
-    case 'fill':
-      await locator.fill(expand.expand(step.value) ?? '');
-      break;
-    case 'select':
-      await locator.selectOption(expand.expand(step.value) ?? '');
-      break;
-    case 'press':
-      await locator.press(step.value ?? 'Enter');
-      break;
-    case 'scroll': {
-      const { x, y } = parsePosition(step.value);
-      await locator.evaluate((el, [px, py]) => {
-        el.scrollLeft = px as number;
-        el.scrollTop = py as number;
-      }, [x, y]);
-      break;
-    }
-    default:
-      throw new Error(`Unsupported action "${step.action}" in step ${step.id}.`);
-  }
-
-  return resolved.candidateIndex;
-}
-
-/**
- * A selector budget proportional to how slowly this app was observed to react.
- *
- * A quarter of the step's own wait: long enough for a heavy app to render the
- * control, short enough that a genuinely missing element fails fast instead of
- * burning the whole budget on the first of five candidates.
- */
-function deriveResolveTimeouts(step: Step): ResolveTimeouts {
-  const first = Math.min(
-    15_000,
-    Math.max(DEFAULT_RESOLVE_TIMEOUTS.first, Math.round(step.waitAfter.timeoutMs / 4)),
-  );
-  return { first, subsequent: Math.max(DEFAULT_RESOLVE_TIMEOUTS.subsequent, Math.round(first / 2)) };
-}
-
-/** Re-point a recorded absolute URL at the base URL replay is actually using. */
-function rebase(recorded: string | null, baseUrl: string): string {
-  if (!recorded) return baseUrl;
-  try {
-    const u = new URL(recorded);
-    return new URL(`${u.pathname}${u.search}${u.hash}`, baseUrl).toString();
-  } catch {
-    return new URL(recorded, baseUrl).toString();
-  }
-}
-
-function parsePosition(value: string | null): { x: number; y: number } {
-  try {
-    const parsed = JSON.parse(value ?? '{}') as { x?: number; y?: number };
-    return { x: parsed.x ?? 0, y: parsed.y ?? 0 };
-  } catch {
-    return { x: 0, y: 0 };
-  }
-}

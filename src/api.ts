@@ -1,4 +1,3 @@
-import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { Page } from 'playwright';
 import { openBrowser } from './browser.js';
@@ -13,8 +12,8 @@ import {
   type ReproSummary,
 } from './ir/io.js';
 import { launchRecording, STOP_HOTKEY, type DriveApi } from './recorder/launch.js';
-import { loadSteps, STEPS_DIR } from './steps.js';
-import { runRepro, type RunOptions, type RunResult } from './replayer/run.js';
+import { loadSteps, STEPS_DIR, type LoadedStep } from './steps.js';
+import { resolveSessionSeed, runRepro, type RunOptions, type RunResult } from './replayer/run.js';
 import type { Repro } from './ir/schema.js';
 
 export interface RecordOptions {
@@ -116,6 +115,8 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
 
 export interface RunReproOptions extends RunOptions {
   name: string;
+  /** Directory of shared setup steps. Defaults to `.repros/steps`, like `record`. */
+  stepsDir?: string | null;
 }
 
 export interface WarmSession {
@@ -139,14 +140,31 @@ export async function openSession(options: {
   name: string;
   root?: string;
   headed?: boolean;
+  /**
+   * Retarget the captured session onto another deployment before seeding —
+   * same meaning as `RunOptions.envUrl`. Without it a warm session for
+   * `--env` opened with the recorded origin's cookies and replayed signed out.
+   */
+  envUrl?: string | null;
+  /** Hold the session in a persistent Chromium profile instead of a seeded fresh context. */
+  profileDir?: string | null;
+  /**
+   * Open the context inside an already-running browser (e.g. a BrowserPool's).
+   * `close()` then closes only the context and leaves the browser alive.
+   */
+  browser?: import('playwright').Browser | null;
 }): Promise<WarmSession> {
   const root = options.root ?? process.cwd();
   const repro = await readRepro(options.name, root);
-  const paths = reproPaths(options.name, root);
+  const seed = resolveSessionSeed(repro, root, options);
   const opened = await openBrowser({
     headless: !options.headed,
     viewport: repro.viewport,
-    storageStatePath: existsSync(paths.storageState) ? paths.storageState : null,
+    storageStatePath: seed.storageStatePath,
+    storageState: seed.storageState,
+    profileDir: options.profileDir ?? null,
+    // A persistent profile owns its own process, so it cannot share one.
+    browser: options.profileDir ? null : (options.browser ?? null),
   });
   return { context: opened.context, page: opened.page, close: opened.close };
 }
@@ -155,10 +173,17 @@ export async function openSession(options: {
 export async function run(options: RunReproOptions): Promise<RunResult> {
   const root = options.root ?? process.cwd();
   const repro = await readRepro(options.name, root);
-  const { steps } = repro.setup.length
-    ? await loadSteps(path.join(root, STEPS_DIR))
-    : { steps: new Map() };
-  const result = await runRepro(repro, { ...options, steps: options.steps ?? steps });
+  const { steps, errors } = repro.setup.length
+    ? await loadSteps(options.stepsDir ?? path.join(root, STEPS_DIR))
+    : { steps: new Map<string, LoadedStep>(), errors: [] as { file: string; message: string }[] };
+  for (const e of errors) {
+    process.stderr.write(`warning: shared step ${e.file} could not be loaded — ${e.message}\n`);
+  }
+  const result = await runRepro(repro, {
+    ...options,
+    steps: options.steps ?? steps,
+    stepErrors: errors,
+  });
 
   await writeLastResult(reproPaths(options.name, root), {
     status: result.passed ? 'pass' : 'fail',
@@ -176,6 +201,24 @@ export async function list(root = process.cwd()): Promise<ReproSummary[]> {
 }
 
 export { assertRepro, fixRepro, type AssertOptions, type FixOptions } from './ir/edit.js';
+export {
+  applyExtract,
+  renderStepModule,
+  suggestExtractions,
+  type ApplyExtractOptions,
+  type ExistingStepMatch,
+  type ExtractReport,
+  type ExtractSuggestion,
+  type SuggestExtractOptions,
+} from './extract.js';
+export {
+  applyExtraction,
+  findCommonPrefixes,
+  stepKey,
+  type ExtractApplyResult,
+  type FindCommonPrefixOptions,
+  type PrefixCandidate,
+} from './ir/extract.js';
 export { createReplayServer, createServer } from './mcp/server.js';
 export { BrowserPool } from './browser.js';
 export {
@@ -187,6 +230,7 @@ export {
   type LoadedStep,
   type StepDefinition,
 } from './steps.js';
+export { replayFragment, type ReplayFragmentOptions } from './replayer/fragment.js';
 export { STOP_HOTKEY };
 export type { DriveApi } from './recorder/launch.js';
 export { deleteRepro, readRepro, reproPaths } from './ir/io.js';

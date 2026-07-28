@@ -331,7 +331,7 @@ function splitConsole(trace: RecordingTrace): ConsoleSplit {
  * it decides whether the bug is present, so a shaky one produces a confident
  * wrong verdict instead of an error.
  */
-function isDurableSelector(selector: string): boolean {
+export function isDurableSelector(selector: string): boolean {
   return selector.startsWith('[data-test') || selector.startsWith('#') || selector.startsWith('role=');
 }
 

@@ -105,8 +105,11 @@ program
       `${green('✓')} Captured ${bold(String(repro.steps.length))} steps ${dim(`(stopped: ${stopReason})`)}`,
     );
     console.log(`  ${dim('→')} ${path.relative(process.cwd(), irPath)}`);
-    if (repro.setup.length) console.log(`  ${dim('session')} ${describeSession(session)}`);
+    // Warnings first: the session line points at them when sharing is off.
     for (const warning of warnings) console.log(`  ${yellow('!')} ${warning}`);
+    if (repro.setup.length) {
+      console.log(`  ${dim('session')} ${describeSession(session, { declared: true })}`);
+    }
     for (const line of await extractionNudge()) console.log(`  ${dim('→')} ${line}`);
 
     const { invariants, observedAtRecord } = repro.assertion;
@@ -205,7 +208,9 @@ program
         cyan(s.name),
         truncate(s.description, 40),
         s.establishesSession ? green('session') : dim('setup'),
-        s.ensures ? dim(truncate(s.ensures, 26)) : yellow('nothing'),
+        s.ensures
+          ? dim(truncate(s.ensures, 26))
+          : yellow(s.establishesSession ? 'nothing (session cannot be shared)' : 'nothing'),
       ]),
     ];
     console.log(table(rows));

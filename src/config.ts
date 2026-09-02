@@ -15,7 +15,8 @@ export const ConfigSchema = z.object({
 });
 export type Config = z.infer<typeof ConfigSchema>;
 
-export const DEFAULT_CONFIG: Config = ConfigSchema.parse({});
+/** Frozen: it is handed to callers and written to disk, and a mutation would travel. */
+export const DEFAULT_CONFIG: Config = Object.freeze(ConfigSchema.parse({}));
 export const CONFIG_FILE = path.join(REPROS_DIR, 'config.json');
 
 export async function loadConfig(root = process.cwd()): Promise<Config> {

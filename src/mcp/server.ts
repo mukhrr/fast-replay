@@ -404,9 +404,12 @@ export async function createReplayServer(root = process.cwd()): Promise<ReplaySe
         : [
             `RECORDED ${name} — ${repro.steps.length} ${stepWord} in ${seconds}s (stopped: ${result!.stopReason})`,
             `IR: ${irPath}`,
-            `Session: ${describeSession(result!.session)}`,
           ];
+      // Warnings before the session line, which points at them when sharing is off.
       for (const warning of result?.warnings ?? []) lines.push(`Note: ${warning}`);
+      if (!partial) {
+        lines.push(`Session: ${describeSession(result!.session, { declared: repro.setup.length > 0 })}`);
+      }
       if (evidence.length) lines.push(`Evidence declared: ${evidence.join(', ')}`);
       if (consoleErrors.length || failedRequests.length) {
         lines.push('The bug, as observed while recording:');
@@ -640,7 +643,7 @@ export async function createReplayServer(root = process.cwd()): Promise<ReplaySe
               text: 'No repros recorded. A developer creates one with: repro record <name> --url <dev server>',
             },
           ],
-          structuredContent: { repros: [] },
+          structuredContent: { repros: [], nudges: [] },
         };
       }
 

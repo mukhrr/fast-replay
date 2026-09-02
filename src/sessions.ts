@@ -103,7 +103,8 @@ export async function persistSession(
   state: string,
   proof: { path: string; proven: boolean },
 ): Promise<void> {
-  await writeFileAtomic(files.state, state);
+  // A live session token, readable by the owner only; the sidecar holds no secret.
+  await writeFileAtomic(files.state, state, 0o600);
   if (!files.meta) return;
   const current = readMeta(files.meta);
   const provenPaths = proof.proven
@@ -314,9 +315,18 @@ export function canPersistHeal(o: {
   return { ok: true };
 }
 
-/** One line for the record output, shared by the CLI and the MCP server. */
-export function describeSession(outcome: SessionOutcome | null): string {
-  if (!outcome) return 'none (no session step declared)';
+/**
+ * One line for the record output, shared by the CLI and the MCP server.
+ *
+ * `declared` says the recording declared setup, which separates "there was no
+ * session step to share" from "there was one and sharing is off", the second of
+ * which is explained by a warning printed just above this line.
+ */
+export function describeSession(
+  outcome: SessionOutcome | null,
+  o: { declared: boolean } = { declared: false },
+): string {
+  if (!outcome) return o.declared ? 'not shared (see warning above)' : 'none (no session step declared)';
   const where = `step "${outcome.step}"`;
   switch (outcome.status) {
     case 'reused':

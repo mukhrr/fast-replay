@@ -69,11 +69,12 @@ export function reproPaths(name: string, root = process.cwd()): ReproPaths {
  * leave a half-parsed IR on disk — which matters because Phase 1's self-healer
  * rewrites selectors in place while a replay is running.
  */
-export async function writeFileAtomic(file: string, contents: string): Promise<void> {
+export async function writeFileAtomic(file: string, contents: string, mode?: number): Promise<void> {
   await mkdir(path.dirname(file), { recursive: true });
   const tmp = `${file}.${randomBytes(6).toString('hex')}.tmp`;
   try {
-    await writeFile(tmp, contents, 'utf8');
+    // Set on the temp file, since rename carries the mode across with it.
+    await writeFile(tmp, contents, mode === undefined ? 'utf8' : { encoding: 'utf8', mode });
     await rename(tmp, file);
   } catch (err) {
     await rm(tmp, { force: true });
@@ -142,7 +143,9 @@ export async function listRepros(root = process.cwd()): Promise<ReproSummary[]> 
   }
 
   const names = entries
-    .filter((e) => e.endsWith('.json') && !RESERVED_NAMES.has(e.slice(0, -'.json'.length)))
+    // Lowercased like assertValidName: a hand-placed Config.json would
+    // otherwise pass this filter and then throw from inside reproPaths.
+    .filter((e) => e.endsWith('.json') && !RESERVED_NAMES.has(e.slice(0, -'.json'.length).toLowerCase()))
     .map((e) => e.slice(0, -'.json'.length));
 
   const summaries = await Promise.all(

@@ -39,25 +39,24 @@ export interface StepDefinition {
   /**
    * A selector that must be present once this has run.
    *
-   * Checked automatically. Without it a broken preamble fails silently and the
-   * repro that used it fails later, somewhere unrelated.
+   * Checked automatically, because without it a broken preamble fails silently
+   * and the repro that used it fails later, somewhere unrelated. On a session
+   * step it doubles as the freshness check, so name something visible on every
+   * signed-in page.
    */
   ensures?: string;
   /** How long to wait for `ensures`. Preambles are usually the slow part. */
   ensuresTimeoutMs?: number;
   /**
-   * This step's whole effect is the browser session — signing in, accepting a
+   * This step's whole effect is the browser session: signing in, accepting a
    * cookie banner, anything whose result is captured by cookies, localStorage
    * or IndexedDB.
    *
-   * Marked so, it runs once at record time and its result is baked into the
-   * repro's stored session. Replay restores that and skips the step, so
-   * verifying a fix twenty times signs in zero times instead of twenty. This is
-   * the difference between a repro that mints a fresh server session on every
-   * run and one that reuses a single captured one.
-   *
-   * Leave it off for setup that changes server state — creating a record, for
-   * instance — since a session snapshot cannot recreate that.
+   * It runs once per project, the session is stored under `.repros/sessions/`
+   * and shared by every repro that declares the step, and replay restores it
+   * and re-runs the step only when it has expired. Leave it off for setup that
+   * changes server state, since a session snapshot cannot recreate a created
+   * record.
    */
   establishesSession?: boolean;
   /**

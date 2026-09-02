@@ -211,6 +211,12 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
     const startUrl = new URL(repro.startPath, baseUrl).toString();
     await page.goto(startUrl, { waitUntil: 'domcontentloaded' });
 
+    // Where the bug flow starts. A heal signs in mid-run, and a sign-in that
+    // fails a same-origin request is already in the recorded signature because
+    // the recording signed in too, so counting it toward the verdict would
+    // report the bug present on a fixed app, but only on the runs that healed.
+    let setupDoneAt = startedAt;
+
     // Setup runs as code, not as replayed clicks, so a fix to a shared step
     // reaches every repro that references it.
     if (repro.setup.length) {
@@ -301,6 +307,7 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
           );
         }
       }
+      setupDoneAt = Date.now();
     }
 
     const timings: StepTiming[] = [];
@@ -534,6 +541,10 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
       }
     }
 
+    // Everything the bug flow itself produced, setup excluded. See setupDoneAt.
+    const bugNetwork = reactions.network.filter((n) => n.startedAt >= setupDoneAt);
+    const bugConsole = reactions.console.filter((c) => c.t >= setupDoneAt);
+
     // Bug-recurrence is a fallback signal, used only when the author has not
     // said what "fixed" means. Console errors are a poor signature on a real
     // SPA — an app that always logs a failed i18n fetch would make every
@@ -541,10 +552,10 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
     // criterion could override it. If one is supplied, it decides.
     const recurred =
       expectFixed && !hasFixCriterion(repro)
-        ? checkBugRecurred(repro, reactions.network, reactions.console, baseUrl)
+        ? checkBugRecurred(repro, bugNetwork, bugConsole, baseUrl)
         : [];
     if (expectFixed && hasFixCriterion(repro)) {
-      const alsoRecurred = checkBugRecurred(repro, reactions.network, reactions.console, baseUrl);
+      const alsoRecurred = checkBugRecurred(repro, bugNetwork, bugConsole, baseUrl);
       for (const detail of alsoRecurred) notes.push(`${detail} (not fatal: expectedWhenFixed governs)`);
     }
     if (recurred.length) {
@@ -562,7 +573,7 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
       );
     }
 
-    let violations = checkInvariants(repro, reactions.network, reactions.console, baseUrl);
+    let violations = checkInvariants(repro, bugNetwork, bugConsole, baseUrl);
     // Build modes differ between deployments: a development server narrates
     // where a minified one is silent. An invariant inferred from one origin
     // cannot fairly govern another, so retargeted runs report rather than fail.

@@ -55,6 +55,22 @@ beforeAll(async () => {
      };`,
   );
   await step(
+    'signed-in-noisy',
+    `export default {
+       name: 'signed-in-noisy',
+       description: 'Signed in, by a sign-in that fails a same-origin request on the way',
+       establishesSession: true,
+       ensures: '[data-testid="signed-in-badge"]',
+       ensuresTimeoutMs: 3000,
+       async run(page) {
+         await page.evaluate(() => fetch('/api/does-not-exist').then(() => undefined));
+         await page.evaluate(() => localStorage.setItem('replay-token', 'ok'));
+         await page.reload({ waitUntil: 'domcontentloaded' });
+         await page.waitForSelector('[data-testid="signed-in-badge"]');
+       },
+     };`,
+  );
+  await step(
     'on-reports',
     `export default {
        name: 'on-reports',
@@ -325,6 +341,26 @@ describe('replay trusts a proven session and heals it once when it dies', () => 
     const next = await run({ name: 'a', root });
     expect(next.passed).toBe(true);
     expect(signIns()).toBe(1);
+  });
+
+  it('keeps a heal\'s own sign-in traffic out of the verdict', async () => {
+    const state = path.join(root, '.repros', 'sessions', `signed-in-noisy@${HOST}.json`);
+    await server.reset();
+    const noisy = await rec('heal-noise', [{ step: 'signed-in-noisy' }]);
+    // The sign-in's 404 is in the recorded signature because the recording
+    // signed in too. A warm replay never signs in, so only a healed run can
+    // fire it again, and it must not read as the bug coming back.
+    expect(noisy.repro.assertion.observedAtRecord?.failedRequests.map((f) => f.urlPattern)).toContain(
+      '/api/does-not-exist',
+    );
+
+    await setToken(state, 'stale');
+    await server.reset();
+    const healed = await run({ name: 'heal-noise', root, expectFixed: true });
+    expect(healed.passed, JSON.stringify(healed.failure)).toBe(true);
+    expect(healed.notes).toContain(
+      'session re-established via step "signed-in-noisy" (stored session had expired)',
+    );
   });
 
   it('reports COULD NOT VERIFY when the step cannot re-establish the session', async () => {

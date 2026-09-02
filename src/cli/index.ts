@@ -5,8 +5,10 @@ import {
   applyExtract,
   assertRepro,
   deleteRepro,
+  describeSession,
   fixRepro,
   list,
+  loadDrive,
   openSession,
   PartialRecordingError,
   readRepro,
@@ -39,20 +41,29 @@ program
   .option('--viewport <WxH>', 'browser viewport', '1440x900')
   .option('--storage-state <file>', 'seed cookies/localStorage/IndexedDB from a Playwright state file')
   .option('--profile <dir>', 'record against a persistent Chromium profile (reuses a login)')
+  .option('--drive <file>', 'run a drive file (defineDrive) instead of waiting for a human; headless')
+  .option('--headed', 'with --drive, watch the recording in a visible browser', false)
   .description('launch an instrumented browser and record a bug reproduction')
   .action(async (name: string, opts) => {
     const viewport = parseViewport(opts.viewport);
+    const driven = opts.drive ? await loadDrive(path.resolve(opts.drive)) : null;
 
-    const { repro, irPath, stopReason } = await record({
+    const { repro, irPath, stopReason, session, warnings } = await record({
       name,
       baseUrl: opts.url,
       startPath: opts.path,
       viewport,
       storageStatePath: opts.storageState ?? null,
       profileDir: opts.profile ?? null,
+      // A driven recording has nobody watching, so it runs headless unless asked.
+      ...(driven ? { drive: driven.drive, setup: driven.setup, headless: !opts.headed } : {}),
       onReady: () => {
         console.log(`${green('●')} ${bold('Recording')} ${cyan(name)} on ${opts.url}${opts.path}`);
-        console.log(dim(`  Reproduce the bug, then press ${STOP_HOTKEY} — or just close the browser.`));
+        console.log(
+          driven
+            ? dim(`  Driving from ${path.relative(process.cwd(), path.resolve(opts.drive))}.`)
+            : dim(`  Reproduce the bug, then press ${STOP_HOTKEY} — or just close the browser.`),
+        );
         console.log('');
       },
     });
@@ -68,6 +79,8 @@ program
       `${green('✓')} Captured ${bold(String(repro.steps.length))} steps ${dim(`(stopped: ${stopReason})`)}`,
     );
     console.log(`  ${dim('→')} ${path.relative(process.cwd(), irPath)}`);
+    if (repro.setup.length) console.log(`  ${dim('session')} ${describeSession(session)}`);
+    for (const warning of warnings) console.log(`  ${yellow('!')} ${warning}`);
 
     const { invariants, observedAtRecord } = repro.assertion;
     if (!invariants.noConsoleErrors || !invariants.noFailedRequests) {

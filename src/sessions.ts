@@ -277,3 +277,17 @@ export function replaySessionTarget(o: {
     : { state: path.resolve(o.root, o.repro.storageStatePath), meta: null };
   return { step, params, key, host, files };
 }
+
+/** One line for the record output, shared by the CLI and the MCP server. */
+export function describeSession(outcome: SessionOutcome | null): string {
+  if (!outcome) return 'none (no session step declared)';
+  const where = `step "${outcome.step}"`;
+  switch (outcome.status) {
+    case 'reused':
+      return `reused the stored session for ${where}, no sign-in`;
+    case 'established':
+      return `signed in via ${where} and stored the session for later recordings`;
+    case 're-established':
+      return `stored session for ${where} had expired; signed in again and replaced it`;
+  }
+}

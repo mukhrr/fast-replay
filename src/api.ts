@@ -270,6 +270,8 @@ export {
   type StepDefinition,
 } from './steps.js';
 export { replayFragment, type ReplayFragmentOptions } from './replayer/fragment.js';
+export { defineDrive, loadDrive, type DriveDefinition } from './drive.js';
+export { describeSession, type SessionOutcome, type SessionStatus } from './sessions.js';
 export { STOP_HOTKEY };
 export type { DriveApi } from './recorder/launch.js';
 export { deleteRepro, readRepro, reproPaths } from './ir/io.js';

@@ -16,6 +16,8 @@ export interface ReproPaths {
   storageState: string;
   artifactsDir: string;
   lastResult: string;
+  /** The agent-written recording script, if there was one: .repros/drive/<name>.mjs */
+  drive: string;
 }
 
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i;
@@ -57,6 +59,7 @@ export function reproPaths(name: string, root = process.cwd()): ReproPaths {
     storageState: path.join(dir, 'state.json'),
     artifactsDir: path.join(dir, 'artifacts'),
     lastResult: path.join(dir, 'last-result.json'),
+    drive: path.join(reprosDir, 'drive', `${name}.mjs`),
   };
 }
 
@@ -178,5 +181,7 @@ export async function deleteRepro(name: string, root = process.cwd()): Promise<b
   );
   await rm(paths.ir, { force: true });
   await rm(paths.dir, { recursive: true, force: true });
+  // The drive file is the recipe for this one repro and goes with it.
+  await rm(paths.drive, { force: true });
   return existed;
 }

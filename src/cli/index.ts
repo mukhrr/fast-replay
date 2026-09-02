@@ -2,14 +2,17 @@
 import path from 'node:path';
 import { Command } from 'commander';
 import {
+  AGENT_WORKFLOW,
   applyExtract,
   assertRepro,
   deleteRepro,
   describeSession,
   extractionNudge,
   fixRepro,
+  initProject,
   list,
   loadDrive,
+  MCP_CONFIG_SNIPPET,
   openSession,
   parseViewport,
   PartialRecordingError,
@@ -34,6 +37,21 @@ program
   .description('Record a bug once, verify the fix in seconds.')
   // Read from the manifest so a build can never misreport which one it is.
   .version(VERSION);
+
+program
+  .command('init')
+  .description('set up .repros/ once per project: ignore rules, config, steps dir, and what to tell your agent')
+  .action(async () => {
+    const { changes } = await initProject();
+    for (const change of changes) console.log(`  ${green('✓')} ${change}`);
+    console.log('');
+    console.log(bold('Add to your MCP client config:'));
+    console.log(`  ${MCP_CONFIG_SNIPPET}`);
+    console.log('');
+    console.log(bold('Add to CLAUDE.md, or wherever your agent reads project notes:'));
+    console.log('');
+    console.log(AGENT_WORKFLOW);
+  });
 
 program
   .command('record')

@@ -11,7 +11,7 @@ import { createReplayServer } from './server.js';
  * which is wrong whenever the repros are kept outside the project being fixed.
  */
 const root = process.env.REPLAY_ROOT ?? process.cwd();
-const { server, dispose } = createReplayServer(root);
+const { server, dispose } = await createReplayServer(root);
 await server.connect(new StdioServerTransport());
 
 // The pooled browsers outlive individual calls, so they need an explicit exit.

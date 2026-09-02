@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { buildInstructions } from '../agent-notes.js';
 import {
   applyExtract,
   deleteRepro,
@@ -132,12 +133,17 @@ export interface ReplayServer {
  */
 const REUSE_DEFAULT = true;
 
-export function createServer(root = process.cwd()): McpServer {
-  return createReplayServer(root).server;
+export async function createServer(root = process.cwd()): Promise<McpServer> {
+  return (await createReplayServer(root)).server;
 }
 
-export function createReplayServer(root = process.cwd()): ReplayServer {
-  const server = new McpServer({ name: 'replay', version: VERSION });
+export async function createReplayServer(root = process.cwd()): Promise<ReplayServer> {
+  // Instructions travel in the initialize response, so this is the one moment
+  // the project's state can reach the agent before its first tool call.
+  const server = new McpServer(
+    { name: 'replay', version: VERSION },
+    { instructions: await buildInstructions(root) },
+  );
 
   /**
    * One browser, held open for the life of the server.
@@ -448,7 +454,11 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
         (s) =>
           `${s.name} — ${s.description}` +
           (s.requires?.length ? ` (requires: ${s.requires.join(', ')})` : '') +
-          (s.ensures ? '' : ' [WARNING: verifies nothing, so a break here surfaces elsewhere]'),
+          (s.ensures
+            ? ''
+            : s.establishesSession
+              ? ' [WARNING: verifies nothing, so a break here surfaces elsewhere and its session cannot be shared]'
+              : ' [WARNING: verifies nothing, so a break here surfaces elsewhere]'),
       );
       for (const e of errors) lines.push(`${e.file} — could not be loaded: ${e.message}`);
       return {

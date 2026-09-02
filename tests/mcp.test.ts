@@ -23,7 +23,7 @@ interface ToolResult {
 let server: DemoServer;
 let root: string;
 let client: Client;
-let replay: ReturnType<typeof createReplayServer>;
+let replay: Awaited<ReturnType<typeof createReplayServer>>;
 
 beforeAll(async () => {
   server = await startDemoServer(5240);
@@ -39,7 +39,7 @@ beforeAll(async () => {
 
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   client = new Client({ name: 'test-agent', version: '1.0.0' });
-  replay = createReplayServer(root);
+  replay = await createReplayServer(root);
   await Promise.all([replay.server.connect(serverTransport), client.connect(clientTransport)]);
 }, 120_000);
 
@@ -397,7 +397,7 @@ describe('warm sessions by default', () => {
 describe('the extraction nudge', () => {
   let nudgeRoot: string;
   let nudgeClient: Client;
-  let nudgeReplay: ReturnType<typeof createReplayServer>;
+  let nudgeReplay: Awaited<ReturnType<typeof createReplayServer>>;
 
   const nudgeCall = (name: string, args: Record<string, unknown> = {}) =>
     nudgeClient.callTool({ name, arguments: args }) as Promise<ToolResult>;
@@ -414,7 +414,7 @@ describe('the extraction nudge', () => {
     }
     const [c, s] = InMemoryTransport.createLinkedPair();
     nudgeClient = new Client({ name: 'test-agent', version: '1.0.0' });
-    nudgeReplay = createReplayServer(nudgeRoot);
+    nudgeReplay = await createReplayServer(nudgeRoot);
     await Promise.all([nudgeReplay.server.connect(s), nudgeClient.connect(c)]);
   }, 120_000);
 
@@ -464,5 +464,85 @@ describe('the extraction nudge', () => {
     } finally {
       await writeFile(configFile, original, 'utf8');
     }
+  });
+});
+
+describe('what the agent knows before its first call', () => {
+  let knownRoot: string;
+  let knownClient: Client;
+  let knownReplay: Awaited<ReturnType<typeof createReplayServer>>;
+
+  beforeAll(async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    knownRoot = await mkdtemp(path.join(tmpdir(), 'replay-known-'));
+    const stepsDir = path.join(knownRoot, '.repros', 'steps');
+    const sessionsDir = path.join(knownRoot, '.repros', 'sessions');
+    await mkdir(stepsDir, { recursive: true });
+    await mkdir(sessionsDir, { recursive: true });
+    await writeFile(
+      path.join(stepsDir, 'signed-in.mjs'),
+      `export default {
+        name: 'signed-in',
+        description: 'Signed in as the seed account',
+        establishesSession: true,
+        ensures: '[data-testid="signed-in-badge"]',
+        async run() {},
+      };`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(stepsDir, 'no-check.mjs'),
+      `export default {
+        name: 'no-check',
+        description: 'A session step with no ensures',
+        establishesSession: true,
+        async run() {},
+      };`,
+      'utf8',
+    );
+    await writeFile(
+      path.join(sessionsDir, 'signed-in@localhost_5240.json'),
+      JSON.stringify({
+        cookies: [],
+        origins: [{ origin: server.baseUrl, localStorage: [{ name: 'replay-token', value: 'ok' }] }],
+      }),
+      'utf8',
+    );
+    await writeFile(
+      path.join(sessionsDir, 'signed-in@localhost_5240.meta.json'),
+      JSON.stringify({ mintedAt: new Date().toISOString(), provenPaths: ['/'] }),
+      'utf8',
+    );
+    await server.reset();
+    await record({ name: 'known-bug', baseUrl: server.baseUrl, root: knownRoot, headless: true, drive: demoBugFlow });
+
+    const [c, s] = InMemoryTransport.createLinkedPair();
+    knownClient = new Client({ name: 'test-agent', version: '1.0.0' });
+    knownReplay = await createReplayServer(knownRoot);
+    await Promise.all([knownReplay.server.connect(s), knownClient.connect(c)]);
+  }, 120_000);
+
+  afterAll(async () => {
+    await knownReplay?.dispose();
+    await knownClient?.close();
+    if (knownRoot) await rm(knownRoot, { recursive: true, force: true });
+  });
+
+  it('sends the workflow and the project snapshot as instructions', () => {
+    const text = knownClient.getInstructions() ?? '';
+    expect(text).toContain('repro_record');
+    expect(text).toContain('signed-in — Signed in as the seed account');
+    expect(text).toMatch(/\[session\]/);
+    expect(text).toMatch(/stored session: localhost_5240/);
+    expect(text).toContain('known-bug — ');
+    expect(text).toContain(`Recorded against: ${server.baseUrl}`);
+    expect(text).toMatch(/no-check — .*verifies nothing/);
+  });
+
+  it('says a session step without ensures cannot share its session', async () => {
+    const result = (await knownClient.callTool({ name: 'repro_steps', arguments: {} })) as ToolResult;
+    const text = result.content.map((c) => c.text ?? '').join('\n');
+    expect(text).toMatch(/no-check.*session cannot be shared/);
+    expect(text).not.toMatch(/signed-in.*WARNING/);
   });
 });

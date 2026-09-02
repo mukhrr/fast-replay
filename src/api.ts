@@ -267,6 +267,9 @@ export {
   type PrefixCandidate,
 } from './ir/extract.js';
 export { createReplayServer, createServer } from './mcp/server.js';
+export { AGENT_WORKFLOW, buildInstructions, MCP_CONFIG_SNIPPET, renderProjectSnapshot } from './agent-notes.js';
+export { GITIGNORE_BLOCK, initProject, type InitReport } from './init.js';
+export { CONFIG_FILE, DEFAULT_CONFIG, loadConfig, type Config } from './config.js';
 export { BrowserPool } from './browser.js';
 export {
   defineStep,

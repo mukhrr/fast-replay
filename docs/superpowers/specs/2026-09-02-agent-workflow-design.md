@@ -72,11 +72,11 @@ A session belongs to the project and the account, not to the repro. A step marke
 
 - `step`: the session step's name.
 - `params-hash`: first six hex characters of a sha256 over the explicit params the caller passed, sorted by key. Omitted when no explicit params were passed. Defaults from the step definition are not part of the key, so changing a default does not orphan the file.
-- `host`: `URL.host` of the origin the session was minted against, port included.
+- `host`: `URL.host` of the origin the session was minted against, port included, with `:` written as `_` so the file name is legal on every platform (`localhost_3000`).
 
 ```
-.repros/sessions/signed-in@localhost:3000.json
-.repros/sessions/signed-in@localhost:3000.meta.json
+.repros/sessions/signed-in@localhost_3000.json
+.repros/sessions/signed-in@localhost_3000.meta.json
 .repros/sessions/signed-in@staging.example.com.json
 .repros/sessions/new-account.a91f3c@staging.example.com.json
 ```

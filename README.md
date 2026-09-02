@@ -32,6 +32,7 @@ Node >= 20.
 ## Use
 
 ```bash
+repro init                                                # once per project: ignore rules, config, agent notes
 repro record checkout-crash --url http://localhost:3000   # click the bug once
 repro run checkout-crash                                  # bug still reproduces?
 repro run checkout-crash --expect-fixed                   # did my fix work?
@@ -56,6 +57,7 @@ Exit `0` on pass, `1` on fail. On failure you get the failing step, what it does
 | `--storage-state <file>` / `--profile <dir>` | get past a login |
 | `--setup <cmd>` | reset state before replaying |
 | `--timeout-scale <n>` | multiply recorded waits, for a slower machine |
+| `--drive <file>` | record by running a drive file, headless; `--headed` to watch |
 
 `repro run` answers in terms of the bug — `BUG REPRODUCED` / `BUG DID NOT REPRODUCE`, and with `--expect-fixed`, `BUG FIXED` / `BUG STILL PRESENT`. A run that could not drive the app says `COULD NOT VERIFY` instead of passing judgement on the bug.
 
@@ -92,7 +94,24 @@ Every edit prints what it changed. `--drop-step` renumbers ids so they keep matc
 { "mcpServers": { "replay": { "command": "npx", "args": ["repro-mcp"] } } }
 ```
 
-`repro_run` returns the verdict, the failing step, console, network and **the page as an inline image** — in one call. Works with Claude Code, Codex, Gemini CLI, Cursor.
+`repro init` prints that line, sets up `.repros/` (steps and config committed, repros and sessions ignored) and prints a short workflow for CLAUDE.md. The server sends the same workflow, plus the project's steps, sessions and repros, as its `instructions`, so an agent starts informed.
+
+An agent records with a drive file, in one call:
+
+```js
+// .repros/drive/checkout-crash.mjs
+import { defineDrive } from 'fast-replay';
+
+export default defineDrive({
+  setup: [{ step: 'signed-in' }],   // seeded from the stored session, not re-run
+  async drive(page, { observe }) {
+    await page.click('[data-testid="checkout"]');
+    await observe('text=Something went wrong');
+  },
+});
+```
+
+`repro_record` runs it headless; `repro record <name> --url <base> --drive <file>` is the same from the CLI. `repro_run` returns the verdict, the failing step, console, network and **the page as an inline image** — in one call. Works with Claude Code, Codex, Gemini CLI, Cursor.
 
 ## What makes it fast
 
@@ -192,19 +211,19 @@ Share the identical part; pass only what genuinely differs. `defaults` keeps the
 
 `ensures` is the part that earns its keep. When the login page moves, one step fails by name and says so; without it, every repro that walked through the preamble fails separately, somewhere further along, looking like unrelated bugs.
 
-**A sign-in step should establish the session, not replay itself.** Mark it `establishesSession: true` and it runs once at record time; the session it produces is captured, and every replay restores it and skips the step. Verifying a fix twenty times signs in **zero** times, instead of minting a fresh server session on each run.
+**A sign-in step establishes a session once per project.** Mark it `establishesSession: true` and give it an `ensures` that is visible on every signed-in page (an account menu, not a home-screen element). The first recording signs in and stores the session under `.repros/sessions/`; later recordings and every replay restore it and skip the step. When the token expires, replay signs in once more, replaces the stored session and says so in its notes.
 
 ```ts
 export default defineStep({
   name: 'signed-in',
   description: 'Signed in as the seed account',
-  establishesSession: true,        // runs once; replay restores the session
-  ensures: '[data-testid="home"]',
-  async run(page) { /* ... */ },
+  establishesSession: true,
+  ensures: '[data-testid="account-menu"]',
+  async run(page) { /* credentials from process.env */ },
 });
 ```
 
-(`repro record --profile ./.replay-profile` does the same for a fully manual recording — sign in once by hand, reuse the profile.)
+Session files hold tokens and are never committed; `repro init` writes the ignore rules. (`repro record --profile ./.replay-profile` does the same for a fully manual recording.)
 
 ### Extracting a shared step from existing repros
 
@@ -273,7 +292,7 @@ The CLI and MCP server are both thin wrappers over these.
 ## Develop
 
 ```bash
-npm test          # 189 tests, unit + real-browser integration
+npm test          # 245 tests, unit + real-browser integration
 npm run stress    # records once, replays 20x, fails on a single flake
 npm run demo      # examples/demo-app
 ```

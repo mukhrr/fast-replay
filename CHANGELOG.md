@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.13.0 — 2026-09-02
+
+### Agents record too
+
+The MCP server could run, list, inspect, extract and delete repros and could not create one, so an agent that had just walked to a bug with Playwright had to hand-write a Node script against the API. `repro_record` runs a drive file — `defineDrive({ setup, drive })` at `.repros/drive/<name>.mjs` — in the pooled browser and returns the steps captured, the bug signature seen while recording, the session status and, when the driver threw, the steps it kept. `repro record --drive` is the same path from the CLI, headless by default. The IR is the one a human recording produces.
+
+Step and drive files are imported with their mtime in the URL, so a file edited between two calls to the long-lived server runs the edited version. Before this, a step fixed while the server ran was not picked up until restart.
+
+### One session per project
+
+A session-establishing step ran once per recording, so ten issues still meant ten sign-ins, and an expired token surfaced as an unrelated step failure somewhere later. A recording now declares its setup; the session step is seeded from `.repros/sessions/<step>@<host>.json` and skipped when the stored session proves alive, and signs in for real otherwise. Replay verifies the step's `ensures` on the start path, runs the step once when it has expired, replaces the stored session and says so in the notes. Under `--env` the target host gets its own session file.
+
+The guard that makes this safe: nothing probes without proof. A probe on a start path where `ensures` is never visible would time out and sign in on every run, which is the failure this exists to remove. Record time proves the check per start path and marks the repro `sessionCheck` only when it held; a repro without the mark, including every repro from an earlier release, restores and skips exactly as before. Name something visible on every signed-in page in a session step's `ensures`.
+
+Two small fixes on the way: a navigation performed by a setup step is no longer captured, so a sign-in that reloads stops leaving a `goto` step in the IR; and a repro cannot be named `config`, `steps`, `sessions` or `drive`.
+
+### `repro init`, and knowing the project before the first call
+
+Steps lived inside a directory most projects ignore as a whole, so the one durable thing in `.repros/` did not travel with the repo. `repro init` writes `.repros/*` with exceptions for `steps/` and `config.json` to `.gitignore`, writes the config, and prints the MCP client line plus a workflow block for CLAUDE.md. The MCP server sends that same workflow as its `instructions`, followed by the project's steps, stored sessions, repros and pending extractions, so an agent starts informed rather than discovering the project one tool call at a time.
+
+`.repros/config.json` holds `extractThreshold` (default 4). Once that many repros share a prefix, `repro record`, `repro_record`, `repro list` and `repro_list` say so in one line. Extraction is still applied only by an explicit, named call, and `repro_run` stays about the bug.
+
 ## 0.12.0 — 2026-07-28
 
 ### One session per issue, actually

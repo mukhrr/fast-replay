@@ -2728,7 +2728,10 @@ describe('the extraction nudge', () => {
   });
 
   it('disappears once the prefix has been extracted', async () => {
-    const applied = await nudgeCall('repro_extract', { name: 'demo-preamble' });
+    // Both repros are the same recording, so the shared prefix is the whole
+    // flow and extraction refuses to leave a repro with nothing but setup.
+    // Taking nine of the ten steps is the --length a caller would choose.
+    const applied = await nudgeCall('repro_extract', { name: 'demo-preamble', length: 9 });
     expect(applied.isError).toBeFalsy();
     expect(await extractionNudge(nudgeRoot)).toEqual([]);
     const listed = await nudgeCall('repro_list');

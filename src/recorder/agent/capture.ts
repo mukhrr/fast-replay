@@ -86,7 +86,12 @@ function isStopHotkey(e: KeyboardEvent): boolean {
   return (e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'x';
 }
 
-export function installCapture(ctx: CaptureContext): void {
+export interface CaptureControls {
+  /** Commit an edit still sitting in the focused field, for a recording that ends on one. */
+  flushPendingFill(): void;
+}
+
+export function installCapture(ctx: CaptureContext): CaptureControls {
   const { config, transport, reveals } = ctx;
 
   // fill: committed on change/blur, never per keystroke
@@ -315,6 +320,8 @@ export function installCapture(ctx: CaptureContext): void {
   window.addEventListener('online', () => emitAction('offline', null, 'false'));
 
   installScrollCapture(ctx, emitAction);
+
+  return { flushPendingFill };
 }
 
 /**

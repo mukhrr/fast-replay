@@ -30,11 +30,20 @@ export function pageAgent(config: AgentConfig): void {
   const dom = observeDomReactions({ config, transport, reveals });
   // An action closes the previous action's reaction window, so pending
   // appearances are confirmed at exactly the point replay would give up on them.
-  installCapture({ config, transport, reveals, beforeAction: () => dom.flushAppearances() });
+  const capture = installCapture({
+    config,
+    transport,
+    reveals,
+    beforeAction: () => dom.flushAppearances(),
+  });
 
   // The last action has no successor to close its window, so the host settles
-  // it explicitly at teardown.
-  globals[FLUSH_GLOBAL] = () => dom.flushAppearances();
+  // it explicitly at teardown. A pending fill is committed by the action that
+  // follows it, so a recording ending on one loses the step without this.
+  globals[FLUSH_GLOBAL] = () => {
+    capture.flushPendingFill();
+    dom.flushAppearances();
+  };
 
   // Last line on purpose: reaching it proves every listener above installed.
   // A recording that silently captures nothing is the worst failure this tool

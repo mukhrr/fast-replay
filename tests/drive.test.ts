@@ -92,6 +92,25 @@ describe('recording from a drive file', () => {
     expect(fromFile.repro.assertion.finalState).toEqual(fromCode.repro.assertion.finalState);
   });
 
+  it('keeps a fill that nothing after it commits', async () => {
+    await server.reset();
+    const ending = await record({
+      name: 'ends-on-fill',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      drive: async (page, { observe }) => {
+        await page.waitForSelector('[data-testid="sensor-row-1"]');
+        await page.fill('[data-testid="sensor-name-input"]', 'Probe');
+        await observe('[data-testid="add-sensor"]');
+      },
+    });
+    const last = ending.repro.steps[ending.repro.steps.length - 1];
+    expect(last?.action).toBe('fill');
+    expect(last?.value).toBe('Probe');
+    await deleteRepro('ends-on-fill', root);
+  });
+
   it('is deleted with its repro', async () => {
     const paths = reproPaths('from-file', root);
     expect(paths.drive).toBe(path.join(root, '.repros/drive/from-file.mjs'));

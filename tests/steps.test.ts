@@ -221,7 +221,7 @@ describe('a session step runs once, not per replay', () => {
     // it on every verification.
     (globalThis as unknown as { __sessionRuns: number }).__sessionRuns = 0;
     await server.reset();
-    await record({
+    const { repro } = await record({
       name: 'sessioned-via-requires',
       baseUrl: server.baseUrl,
       root,
@@ -232,11 +232,10 @@ describe('a session step runs once, not per replay', () => {
       },
     });
     expect((globalThis as unknown as { __sessionRuns: number }).__sessionRuns).toBe(1);
-    // The captured state must be the post-sign-in one, not the boot snapshot.
-    const state = await readFile(
-      path.join(root, '.repros/sessioned-via-requires/state.json'),
-      'utf8',
-    );
+    // The captured state must be the post-sign-in one, not the boot snapshot,
+    // and it is the project's shared session rather than a per-repro copy.
+    expect(repro.storageStatePath).toBe('.repros/sessions/session@localhost_5441.json');
+    const state = await readFile(path.join(root, repro.storageStatePath!), 'utf8');
     expect(state).toContain('replay-token');
 
     (globalThis as unknown as { __sessionRuns: number }).__sessionRuns = 0;
@@ -251,7 +250,7 @@ describe('a session step runs once, not per replay', () => {
   it('does not let an empty state file masquerade as a session', async () => {
     // A state file with nothing in it restores nothing. Skipping sign-in on
     // its existence alone replayed logged out.
-    const statePath = path.join(root, '.repros/sessioned/state.json');
+    const statePath = path.join(root, '.repros/sessions/session@localhost_5441.json');
     const original = await readFile(statePath, 'utf8');
     await writeFile(statePath, JSON.stringify({ cookies: [], origins: [] }), 'utf8');
     try {

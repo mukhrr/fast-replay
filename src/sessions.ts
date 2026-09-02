@@ -185,3 +185,67 @@ export function planSession(o: {
   const probe = stored && readMeta(files.meta).provenPaths.includes(o.startPath);
   return { target: { step, params, key, host, files }, seedPath: probe ? files.state : null, probe, disabled: null };
 }
+
+export type SessionStatus = 'reused' | 'established' | 're-established';
+
+/** What a recording ends up sharing, for the IR and for whoever is reading the output. */
+export interface SessionOutcome {
+  step: string;
+  key: string;
+  host: string;
+  status: SessionStatus;
+  /** The step's ensures was visible on the start path, so the repro may carry sessionCheck. */
+  proven: boolean;
+  /** Absolute path of the shared state file the repro should point at. */
+  statePath: string;
+}
+
+/** Whether the step's `ensures` is visible on the current page, within the step's own budget. */
+export async function ensuresVisible(page: Page, step: LoadedStep): Promise<boolean> {
+  if (!step.ensures) return false;
+  try {
+    await page
+      .locator(step.ensures)
+      .first()
+      .waitFor({ state: 'visible', timeout: step.ensuresTimeoutMs ?? 30_000 });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Trust a seeded session if it proves alive, otherwise sign in for real, and
+ * record whether the start path proves.
+ *
+ * One routine for record and replay, so the probe and the heal cannot
+ * diverge. `probe` is only ever true when the caller holds proof for this
+ * start path; a probe without proof would time out and sign in every time.
+ */
+export async function establishSession(o: {
+  page: Page;
+  context: BrowserContext;
+  steps: Map<string, LoadedStep>;
+  ran: Set<string>;
+  target: SessionTarget;
+  startUrl: string;
+  startPath: string;
+  probe: boolean;
+  /** Write the state and proof back. Off under a persistent profile, which holds its own session. */
+  persist: boolean;
+}): Promise<{ status: SessionStatus; proven: boolean }> {
+  const { step } = o.target;
+  if (o.probe && (await ensuresVisible(o.page, step))) {
+    o.ran.add(step.name);
+    return { status: 'reused', proven: true };
+  }
+  // Replay marks a restored session's steps as run before getting here, and
+  // runStep returns early for anything in that set.
+  o.ran.delete(step.name);
+  await runStep(step.name, o.page, o.steps, o.ran, o.target.params);
+  const state = await captureStorageState(o.context);
+  await o.page.goto(o.startUrl, { waitUntil: 'domcontentloaded' });
+  const proven = await ensuresVisible(o.page, step);
+  if (o.persist) await persistSession(o.target.files, state, { path: o.startPath, proven });
+  return { status: o.probe ? 're-established' : 'established', proven };
+}

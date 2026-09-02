@@ -1,5 +1,5 @@
 import path from 'node:path';
-import type { Page } from 'playwright';
+import type { Browser, Page } from 'playwright';
 import { openBrowser } from './browser.js';
 import { compile } from './compiler/compile.js';
 import {
@@ -13,6 +13,7 @@ import {
 } from './ir/io.js';
 import { launchRecording, STOP_HOTKEY, type DriveApi } from './recorder/launch.js';
 import { loadSteps, STEPS_DIR, type LoadedStep } from './steps.js';
+import { planSession, type SessionOutcome } from './sessions.js';
 import { resolveSessionSeed, runRepro, type RunOptions, type RunResult } from './replayer/run.js';
 import type { Repro } from './ir/schema.js';
 
@@ -36,12 +37,26 @@ export interface RecordOptions {
   drive?: (page: Page, api: DriveApi) => Promise<void>;
   /** Directory of shared setup steps. Defaults to `.repros/steps`. */
   stepsDir?: string | null;
+  /**
+   * Shared setup declared up front and run before `drive` gets the page.
+   *
+   * Declared rather than invoked so a session step is seeded from the project's
+   * stored session before the context exists. `api.step()` inside `drive`
+   * still works for everything else.
+   */
+  setup?: { step: string; params?: Record<string, string> }[];
+  /** Record inside an already-running browser, e.g. the MCP server's pool. */
+  browser?: Browser | null;
 }
 
 export interface RecordResult {
   repro: Repro;
   irPath: string;
   stopReason: string;
+  /** The shared session reused or written; null when the repro keeps its own state file. */
+  session: SessionOutcome | null;
+  /** Non-fatal things worth printing: sharing disabled and why, a start path that did not prove. */
+  warnings: string[];
 }
 
 /**
@@ -84,25 +99,49 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
     process.stderr.write(`warning: shared step ${e.file} could not be loaded — ${e.message}\n`);
   }
 
-  const { trace, storageState, stopReason, driveError, observed, setup } = await launchRecording({
+  const declared = options.setup ?? [];
+  const plan = planSession({
+    root,
     baseUrl: options.baseUrl,
-    startPath: options.startPath,
-    viewport: options.viewport,
-    storageStatePath: options.storageStatePath ?? null,
-    profileDir: options.profileDir ?? null,
-    onReady: options.onReady,
-    headless: options.headless,
-    drive: options.drive,
+    startPath: options.startPath ?? '/',
+    setup: declared,
     steps: sharedSteps,
+    explicitSeed: options.storageStatePath ? 'storage-state' : options.profileDir ? 'profile' : null,
   });
 
-  await writeFileAtomic(paths.storageState, storageState);
+  const { trace, storageState, stopReason, driveError, observed, setup, session, warnings } =
+    await launchRecording({
+      baseUrl: options.baseUrl,
+      startPath: options.startPath,
+      viewport: options.viewport,
+      storageStatePath: options.storageStatePath ?? null,
+      profileDir: options.profileDir ?? null,
+      onReady: options.onReady,
+      headless: options.headless,
+      drive: options.drive,
+      steps: sharedSteps,
+      setup: declared,
+      session: plan,
+      root,
+      browser: options.browser ?? null,
+    });
+
+  // A shared session is referenced, not copied: one file to refresh when it
+  // expires, and no per-repro snapshot to go stale beside it.
+  let storageStatePath: string;
+  if (session) {
+    storageStatePath = path.relative(root, session.statePath);
+  } else {
+    await writeFileAtomic(paths.storageState, storageState);
+    storageStatePath = path.relative(root, paths.storageState);
+  }
 
   const repro = compile(trace, {
     name: options.name,
-    storageStatePath: path.relative(root, paths.storageState),
+    storageStatePath,
     observed,
     setup,
+    ...(session?.proven ? { sessionCheck: { step: session.step } } : {}),
   });
 
   // Written before any error is raised: a driver that failed on step 12 still
@@ -110,7 +149,7 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
   await writeRepro(repro, paths);
 
   if (driveError) throw new PartialRecordingError(driveError, paths.ir, repro);
-  return { repro, irPath: paths.ir, stopReason };
+  return { repro, irPath: paths.ir, stopReason, session, warnings };
 }
 
 export interface RunReproOptions extends RunOptions {

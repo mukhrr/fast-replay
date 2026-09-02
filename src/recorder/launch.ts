@@ -1,4 +1,4 @@
-import type { Page } from 'playwright';
+import type { Browser, Page } from 'playwright';
 import { captureStorageState, openBrowser } from '../browser.js';
 import {
   attachRecorder,
@@ -9,6 +9,16 @@ import {
   type StopReason,
 } from './attach.js';
 import { runStep, transitiveRequires, type LoadedStep } from '../steps.js';
+import {
+  ensuresVisible,
+  establishSession,
+  hostSlug,
+  persistSession,
+  sessionFiles,
+  sessionKey,
+  type SessionOutcome,
+  type SessionPlan,
+} from '../sessions.js';
 import type { RecordingTrace } from './types.js';
 
 export interface LaunchRecordingOptions {
@@ -34,6 +44,20 @@ export interface LaunchRecordingOptions {
    * capture happens below whoever is doing the driving.
    */
   drive?: (page: Page, api: DriveApi) => Promise<void>;
+  /**
+   * Setup declared up front and run before `drive` gets the page.
+   *
+   * Declared rather than invoked so a session step can be seeded from the
+   * project's stored session before the context exists, the only point at
+   * which Playwright can seed one.
+   */
+  setup?: { step: string; params?: Record<string, string> }[];
+  /** How the declared session step is seeded, decided by `planSession` before the browser opens. */
+  session?: SessionPlan | null;
+  /** Project root, where session files live. */
+  root?: string;
+  /** Record inside an already-running browser, e.g. the MCP server's pool. */
+  browser?: Browser | null;
 }
 
 /**
@@ -78,6 +102,10 @@ export interface RecordingResult {
   stopReason: StopReason;
   /** Set when `drive` threw. The trace up to that point is still usable. */
   driveError: Error | null;
+  /** The shared session this recording reused or wrote; null when the repro keeps its own state. */
+  session: SessionOutcome | null;
+  /** Non-fatal things the caller should show: sharing disabled and why, a start path that did not prove. */
+  warnings: string[];
 }
 
 export const STOP_HOTKEY = 'Ctrl/Cmd + Shift + X';
@@ -88,11 +116,13 @@ export async function launchRecording(
   const viewport = options.viewport ?? { width: 1440, height: 900 };
   const startPath = options.startPath ?? '/';
 
+  const plan = options.session ?? null;
   const opened = await openBrowser({
     headless: options.headless ?? false,
     viewport,
-    storageStatePath: options.storageStatePath ?? null,
+    storageStatePath: plan?.seedPath ?? options.storageStatePath ?? null,
     profileDir: options.profileDir ?? null,
+    browser: options.browser ?? null,
   });
 
   try {
@@ -128,31 +158,65 @@ export async function launchRecording(
     const observed: { selector: string; absent: boolean }[] = [];
     const setup: { step: string; params?: Record<string, string> }[] = [];
     const ranSteps = new Set<string>();
+    const steps = options.steps ?? new Map<string, LoadedStep>();
+    const root = options.root ?? process.cwd();
+    const warnings: string[] = [];
+    let sessionOutcome: SessionOutcome | null = null;
     // Overwritten each time a session-establishing step completes, so the final
     // value is the session as it stood once all sign-in was done.
     let sessionStorageState: string | null = null;
+
+    const invoke = async (name: string, params?: Record<string, string>): Promise<void> => {
+      // Nothing setup does belongs in the IR. Recorded, it is copied into
+      // every repro that used it, and fixing the shared function would fix
+      // none of them.
+      session.suspend();
+      try {
+        await runStep(name, page, steps, ranSteps, params ?? {});
+      } finally {
+        session.resume();
+      }
+      setup.push({ step: name, ...(params ? { params } : {}) });
+      // Sign-in may sit behind the invoked step as a `requires` dependency
+      // rather than being invoked itself, so the whole chain decides whether
+      // this call established a session.
+      const sessionSteps = Array.from(transitiveRequires([name], steps))
+        .map((n) => steps.get(n))
+        .filter((s): s is LoadedStep => Boolean(s?.establishesSession));
+      if (!sessionSteps.length) return;
+      const state = await captureStorageState(context);
+      sessionStorageState = state;
+
+      // A session step invoked from drive() rather than declared still leaves
+      // a shared session behind, under the same eligibility rules as a
+      // declared one, so the next recording can declare it and skip the
+      // sign-in this one paid. Only when the declared setup had no session
+      // step at all: a plan that shared or refused already decided. Proof is
+      // claimed only if the page happens to be on the start path right now;
+      // navigating away would disrupt the driver mid-flow.
+      const only = sessionSteps[0];
+      if (
+        plan?.target ||
+        plan?.disabled ||
+        sessionOutcome ||
+        sessionSteps.length > 1 ||
+        !only?.ensures ||
+        options.storageStatePath ||
+        options.profileDir
+      ) {
+        return;
+      }
+      const key = sessionKey(only.name, name === only.name ? (params ?? {}) : {});
+      const host = hostSlug(options.baseUrl);
+      const files = sessionFiles(root, key, host);
+      const onStartPath = pathOf(page.url(), options.baseUrl) === startPath;
+      const proven = onStartPath && (await ensuresVisible(page, only));
+      await persistSession(files, state, { path: startPath, proven });
+      sessionOutcome = { step: only.name, key, host, status: 'established', proven, statePath: files.state };
+    };
+
     const api: DriveApi = {
-      async step(name, params) {
-        // Nothing setup does belongs in the IR. Recorded, it is copied into
-        // every repro that used it, and fixing the shared function would fix
-        // none of them.
-        session.suspend();
-        try {
-          await runStep(name, page, options.steps ?? new Map(), ranSteps, params ?? {});
-        } finally {
-          session.resume();
-        }
-        setup.push({ step: name, ...(params ? { params } : {}) });
-        // Sign-in may sit behind the invoked step as a `requires` dependency
-        // rather than being invoked itself, so the whole chain decides whether
-        // this call established a session. Missing it here wrote the
-        // pre-sign-in snapshot to state.json, and every replay signed in again.
-        const steps = options.steps ?? new Map<string, LoadedStep>();
-        const chain = transitiveRequires([name], steps);
-        if (Array.from(chain).some((n) => steps.get(n)?.establishesSession)) {
-          sessionStorageState = await captureStorageState(context);
-        }
-      },
+      step: invoke,
       async observe(selector, opts) {
         const absent = Boolean(opts?.absent);
         const count = await page.locator(selector).count();
@@ -166,6 +230,43 @@ export async function launchRecording(
         observed.push({ selector, absent });
       },
     };
+
+    // Declared setup runs before the driver gets the page. The session step is
+    // handled first so the rest of the declared steps find it already done.
+    if (plan?.disabled) warnings.push(`declared setup is not shared: ${plan.disabled}`);
+    if (plan?.target) {
+      session.suspend();
+      try {
+        const result = await establishSession({
+          page,
+          context,
+          steps,
+          ran: ranSteps,
+          target: plan.target,
+          startUrl,
+          startPath,
+          probe: plan.probe,
+          persist: true,
+        });
+        sessionOutcome = {
+          step: plan.target.step.name,
+          key: plan.target.key,
+          host: plan.target.host,
+          status: result.status,
+          proven: result.proven,
+          statePath: plan.target.files.state,
+        };
+        if (!result.proven) {
+          warnings.push(
+            `step "${plan.target.step.name}" signed in, but its ensures (${plan.target.step.ensures}) is not visible on ${startPath}; ` +
+              'this repro will restore the session without checking it',
+          );
+        }
+      } finally {
+        session.resume();
+      }
+    }
+    for (const entry of options.setup ?? []) await invoke(entry.step, entry.params);
 
     let driveError: Error | null = null;
     let stopReason: StopReason;
@@ -212,6 +313,8 @@ export async function launchRecording(
       driveError,
       observed,
       setup,
+      session: sessionOutcome,
+      warnings,
     };
   } finally {
     await opened.close();

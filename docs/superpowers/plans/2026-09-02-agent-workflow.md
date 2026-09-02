@@ -3302,7 +3302,7 @@ repro rm checkout-crash                                   # once it's fixed
 
 - [ ] **Step 2: README, the coding-agent section**
 
-Replace the `## From a coding agent` section (heading through the `Works with Claude Code, Codex, Gemini CLI, Cursor.` line) with:
+The README is the front page of an open-source npm package: keep it as short as it can be. Replace the `## From a coding agent` section (heading through the `Works with Claude Code, Codex, Gemini CLI, Cursor.` line) with:
 
 ````markdown
 ## From a coding agent
@@ -3311,18 +3311,16 @@ Replace the `## From a coding agent` section (heading through the `Works with Cl
 { "mcpServers": { "replay": { "command": "npx", "args": ["repro-mcp"] } } }
 ```
 
-`repro init` prints that line, sets up `.repros/` so steps and config are committed while repros and sessions stay out of git, and prints a workflow block for CLAUDE.md. The server sends the same workflow, plus what the project already has (steps, stored sessions, repros, pending extractions), as its `instructions`, so an agent knows the state before its first call.
+`repro init` prints that line, sets up `.repros/` (steps and config committed, repros and sessions ignored) and prints a short workflow for CLAUDE.md. The server sends the same workflow, plus the project's steps, sessions and repros, as its `instructions`, so an agent starts informed.
 
-### Agents record too
-
-An agent that has walked to a bug with Playwright already holds the locators. They go in a drive file, and the recording is one call:
+An agent records with a drive file, in one call:
 
 ```js
 // .repros/drive/checkout-crash.mjs
 import { defineDrive } from 'fast-replay';
 
 export default defineDrive({
-  setup: [{ step: 'signed-in' }],
+  setup: [{ step: 'signed-in' }],   // seeded from the stored session, not re-run
   async drive(page, { observe }) {
     await page.click('[data-testid="checkout"]');
     await observe('text=Something went wrong');
@@ -3330,9 +3328,7 @@ export default defineDrive({
 });
 ```
 
-`repro_record`, or `repro record checkout-crash --url http://localhost:3000 --drive .repros/drive/checkout-crash.mjs`, runs it headless and returns the steps captured, the bug signature seen while recording, and whether the stored session was reused. `setup` is declared rather than invoked so the sign-in step can be seeded from the project's stored session before the browser opens. The drive file is deleted with its repro.
-
-`repro_run` returns the verdict, the failing step, console, network and **the page as an inline image** — in one call. Works with Claude Code, Codex, Gemini CLI, Cursor.
+`repro_record` runs it headless; `repro record <name> --url <base> --drive <file>` is the same from the CLI. `repro_run` returns the verdict, the failing step, console, network and **the page as an inline image** — in one call. Works with Claude Code, Codex, Gemini CLI, Cursor.
 ````
 
 - [ ] **Step 3: README, sessions**
@@ -3340,28 +3336,28 @@ export default defineDrive({
 Replace the paragraph starting `**A sign-in step should establish the session, not replay itself.**`, its code block, and the `(repro record --profile ...)` line, with:
 
 ````markdown
-**A sign-in step establishes a session once per project, not once per repro.** Mark it `establishesSession: true`. The first recording that declares it signs in and stores the session at `.repros/sessions/<step>@<host>.json`; every later recording that declares it, and every replay, restores that file and skips the step. When the token expires, replay notices, runs the step once, replaces the stored session and says so in the notes. Ten issues cost one sign-in, plus one more each time the session dies.
+**A sign-in step establishes a session once per project.** Mark it `establishesSession: true` and give it an `ensures` that is visible on every signed-in page (an account menu, not a home-screen element). The first recording signs in and stores the session under `.repros/sessions/`; later recordings and every replay restore it and skip the step. When the token expires, replay signs in once more, replaces the stored session and says so in its notes.
 
 ```ts
 export default defineStep({
   name: 'signed-in',
   description: 'Signed in as the seed account',
   establishesSession: true,
-  ensures: '[data-testid="account-menu"]',   // visible on every signed-in page
-  async run(page) { /* credentials from process.env, never from this file */ },
+  ensures: '[data-testid="account-menu"]',
+  async run(page) { /* credentials from process.env */ },
 });
 ```
 
-`ensures` doubles as the freshness check, so name something visible on every signed-in page: an account menu rather than a home-screen element. Record time checks it on the repro's start path right after a real sign-in and marks the repro `sessionCheck` only when it held. A repro without the mark restores the session without checking it, as before. Session files hold tokens and are never committed; `repro init` writes the ignore rules.
-
-(`repro record --profile ./.replay-profile` does the same for a fully manual recording — sign in once by hand, reuse the profile.)
+Session files hold tokens and are never committed; `repro init` writes the ignore rules. (`repro record --profile ./.replay-profile` does the same for a fully manual recording.)
 ````
 
-Also update the Flag table row for `--storage-state` / `--profile` to `get past a login by hand; a declared session step is not shared when either is given`, and add a row:
+In the Flag table add one row and leave the rest alone:
 
 ```
 | `--drive <file>` | record by running a drive file, headless; `--headed` to watch |
 ```
+
+Nothing else in the README changes. The `sessionCheck` mechanics, the proof rule and the layout details live in CLAUDE.md and the CHANGELOG, not on the front page.
 
 - [ ] **Step 4: CLAUDE.md**
 

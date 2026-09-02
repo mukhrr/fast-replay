@@ -3,9 +3,9 @@
 [![CI](https://github.com/mukhrr/fast-replay/actions/workflows/ci.yml/badge.svg)](https://github.com/mukhrr/fast-replay/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/fast-replay)](https://www.npmjs.com/package/fast-replay)
 
-Turn an expensive, unrepeatable setup into a cheap, repeatable question.
+Record a browser bug once, replay it in seconds, with no model in the loop.
 
-Some bugs live behind state you can only create once — a transferred workspace, a consumed invite, a migrated account. Getting there costs half an hour. Checking whether your fix worked should not cost it again. Record the observation once, and you own a few-second check you can run forever, with no model in the loop.
+Some bugs sit behind state you can only create once: a transferred workspace, a consumed invite, a migrated account. Getting there costs half an hour. Checking whether your fix worked should not cost it again. Do the irreversible part by hand, record the flow that looks at the result, and you own a few-second check you can run forever.
 
 ```
 $ repro run sensor-delete-crash
@@ -18,7 +18,7 @@ s10   click   23ms  1.79s  1.81s  Generate report button
 ✓ PASS  sensor-delete-crash — 10 steps in 2.84s
 ```
 
-Repros are disposable. They live in `.repros/`, and you delete them when the bug is fixed.
+Repros live in `.repros/` and are disposable. Delete one when its bug is fixed; left behind, it rots against a moving app and becomes a test nobody meant to write.
 
 ## Install
 
@@ -36,30 +36,25 @@ repro init                                                # once per project: ig
 repro record checkout-crash --url http://localhost:3000   # click the bug once
 repro run checkout-crash                                  # bug still reproduces?
 repro run checkout-crash --expect-fixed                   # did my fix work?
+repro watch checkout-crash --expect-fixed                 # keep the browser open, replay on Enter
 repro list
-repro watch checkout-crash --expect-fixed                 # fix-verify loop
 repro rm checkout-crash                                   # once it's fixed
 ```
 
-`repro watch` holds the browser open and replays on Enter. Every `repro run` otherwise boots the app from a cold cache, which on a heavy single-page app costs several times the replay itself. It trades isolation for speed — state carries over between replays, so pair it with `--setup` if your flow changes anything.
+Stop recording with **Ctrl/Cmd + Shift + X**, or close the browser.
 
-**Delete a repro when its bug is fixed.** That is what makes this different from a test suite: a repro captures one bug and is finished the moment that bug is gone. Left behind, it rots against a moving app and becomes a test nobody meant to write. `repro run --expect-fixed` reminds you, and the MCP server exposes `repro_delete` so an agent can clean up after verifying its own fix.
-
-Stop recording with **Ctrl/Cmd + Shift + X**, or just close the browser.
-
-Exit `0` on pass, `1` on fail. On failure you get the failing step, what it does in plain language, expected vs observed, and `.repros/<name>/artifacts/` with a screenshot, console tail and network log.
+`repro run` answers in terms of the bug: `BUG REPRODUCED` / `BUG DID NOT REPRODUCE`, or with `--expect-fixed`, `BUG FIXED` / `BUG STILL PRESENT`. A run that could not drive the app says `COULD NOT VERIFY` instead of guessing. Exit `0` on pass, `1` on fail. A failure leaves a screenshot, console tail and network log in `.repros/<name>/artifacts/`.
 
 | Flag | |
 |---|---|
 | `--expect-fixed` | pass when the bug no longer happens |
 | `--env <url>` | replay a repro recorded elsewhere against this deployment |
 | `--headed` | visible browser; some apps refuse headless |
-| `--storage-state <file>` / `--profile <dir>` | get past a login |
+| `--profile <dir>` | record or replay in a persistent Chromium profile, to reuse a login |
+| `--storage-state <file>` | record only: seed cookies and storage from a Playwright state file |
 | `--setup <cmd>` | reset state before replaying |
 | `--timeout-scale <n>` | multiply recorded waits, for a slower machine |
-| `--drive <file>` | record only: record by running a drive file, headless; `--headed` to watch |
-
-`repro run` answers in terms of the bug — `BUG REPRODUCED` / `BUG DID NOT REPRODUCE`, and with `--expect-fixed`, `BUG FIXED` / `BUG STILL PRESENT`. A run that could not drive the app says `COULD NOT VERIFY` instead of passing judgement on the bug.
+| `--drive <file>` | record only: drive the recording from a file instead of by hand |
 
 ### Record on staging, verify on localhost
 
@@ -69,13 +64,9 @@ repro record checkout-crash --url https://staging.example.com
 repro run checkout-crash --env http://localhost:3000 --expect-fixed
 ```
 
-`--env` moves `goto` steps, the app's own network patterns and the captured session onto the target origin. Sibling hosts (`api.example.com`) move with the app; third-party origins are left alone.
+`--env` moves `goto` steps, the app's own network patterns and the captured session onto the target origin. Sibling hosts such as `api.example.com` move with the app; third-party origins are left alone. `-u` redirects navigation only.
 
-`-u` is the narrow version — it redirects navigation only, which leaves absolute network patterns unsatisfiable.
-
-### Repairing a recording
-
-A recording is a first draft. Repairing one used to mean hand-editing JSON:
+### Repair a recording
 
 ```bash
 repro fix my-bug --scale-timeouts 3 --min-timeout 8000
@@ -86,7 +77,7 @@ repro assert my-bug --fixed --appeared 'text=Total spend'
 repro assert my-bug --fixed --focused '[data-testid="opener"]'
 ```
 
-Every edit prints what it changed. `--drop-step` renumbers ids so they keep matching position.
+Every edit prints what it changed. A bug with no console error or failed request needs one of these `assert` lines, or `--expect-fixed` refuses to answer rather than pass a check that checked nothing.
 
 ## From a coding agent
 
@@ -106,18 +97,59 @@ export default defineDrive({
   setup: [{ step: 'signed-in' }],   // seeded from the stored session, not re-run
   async drive(page, { observe }) {
     await page.click('[data-testid="checkout"]');
-    await observe('text=Something went wrong');
+    await observe('text=Something went wrong');   // checked now; the recording fails if it does not hold
   },
 });
 ```
 
-`repro_record` runs it headless; `repro record <name> --url <base> --drive <file>` is the same from the CLI. `repro_run` returns the verdict, the failing step, console, network and **the page as an inline image** — in one call. Works with Claude Code, Codex, Gemini CLI, Cursor.
+`repro_record` runs it headless (`repro record <name> --url <base> --drive <file>` from the CLI). `repro_run` returns the verdict, the failing step, console, network and the page as an inline image, in one call. Between calls the server keeps the browser warm, since one issue means many runs against the same repro; pass `reuse: false` for a verification that must stand alone. Also exposed: `repro_list`, `repro_steps`, `repro_extract`, `repro_artifacts`, `repro_delete`. Works with Claude Code, Codex, Gemini CLI, Cursor.
 
-## What makes it fast
+## Shared setup steps
 
-Replay never sleeps. Every wait is a signal the recording actually observed — a request settling, an element appearing or vanishing — so a step proceeds the instant the app reacts. Timeouts are derived from what was measured, not guessed.
+The preamble to a bug is the same across most repros: sign in, open a workspace, get to a chat. Write it once:
 
-The recording is JSON, not generated code. It is meant to be read and hand-edited.
+```ts
+// .repros/steps/signed-in.mjs
+import { defineStep } from 'fast-replay';
+
+export default defineStep({
+  name: 'signed-in',
+  description: 'Signed in as the seed account',
+  establishesSession: true,                 // runs once per project; the session is stored and restored
+  ensures: '[data-testid="account-menu"]',  // checked after it runs; pick something visible on every signed-in page
+  async run(page) { /* credentials from process.env */ },
+});
+```
+
+```ts
+drive: async (page, { step, observe }) => {
+  await step('signed-in');                          // uses the stored account
+  await step('new-account', { plan: 'control' });   // when a bug needs something different
+  ...
+}
+```
+
+Setup is referenced, not recorded. The IR names the step and replay runs the function, so the recording holds only the bug flow and fixing a step fixes every repro that uses it. A step that fails reports `COULD NOT VERIFY` by name, with the file it lives in, never a verdict on the bug. A step can `requires` other steps, and `defaults` keeps the common call empty.
+
+A step marked `establishesSession` signs in once and stores the session under `.repros/sessions/`. Later recordings and every replay restore it and skip the step. When the token expires, replay signs in once more, replaces the stored session and says so. Session files hold tokens and are never committed.
+
+`repro steps` lists what exists, and the MCP server exposes the same list, so an agent checks before writing a fourth sign-in helper.
+
+### Extract a step from existing repros
+
+```bash
+repro extract                     # list step sequences repeated across repros; writes nothing
+repro extract --apply signed-in   # write .repros/steps/signed-in.mjs, rewrite the matched repros
+repro extract --use signed-in     # a new recording re-drove an existing step: convert it instead
+```
+
+Matching is structural, with volatile identifiers (row numbers, uuids, tokens) masked, and only a true prefix qualifies because setup replays before recorded steps. A repro that matches only after masking is reported but never rewritten. The generated step embeds its steps as plain IR and replays them through the ordinary machinery; edit selectors in the file like any IR, or replace `run()` with hand-written Playwright when you outgrow the recording. Once a prefix is shared by `extractThreshold` repros (`.repros/config.json`, default 4), `repro record` and `repro list` say so.
+
+## How it works
+
+Replay never sleeps. Every wait is a signal the recording observed, a request settling or an element appearing or vanishing, so a step proceeds the instant the app reacts and timeouts come from what was measured.
+
+The recording is JSON, meant to be read and hand-edited:
 
 ```jsonc
 {
@@ -135,120 +167,7 @@ The recording is JSON, not generated code. It is meant to be read and hand-edite
 }
 ```
 
-Selectors are a ladder: test id → `name` → ARIA role + accessible name → labelled ancestor → stable CSS path → text. Build-generated class names are skipped, and a path unique only by sibling position ranks below the text anchor.
-
-### Focus assertions
-
-Every step records where focus came to rest (`step.focusedAfter`). Nothing asserts it automatically — copy it into the assertion when it is the thing you care about:
-
-```jsonc
-"assertion": { "expectedWhenFixed": { "focused": "[data-testid=\"currency-picker\"]" } }
-```
-
-Focus restoration (WCAG 2.4.3) leaves no console error, no failed request and no DOM difference, so it is invisible to every other signal — and a deterministic replayer settles it in one line.
-
-## The technique that makes it work
-
-**Do the irreversible part by hand. Record only the observation downstream of it.**
-
-Almost every interesting bug sits behind state you cannot recreate on demand. Transfer the ownership, consume the invite, run the migration — once, manually. Then record the flow that *looks at* the result, which is cheap, deterministic and mutates nothing.
-
-That split is what makes a repro replayable a hundred times, and it turns the single-shot limitation below from a disqualification into a normal part of authoring.
-
-Recording programmatically is a first-class path, not a fallback:
-
-```ts
-import { record } from 'fast-replay';
-
-await record({
-  name: 'transfer-owner-lockout',
-  baseUrl: 'https://staging.example.com',
-  drive: async (page, { observe }) => {
-    // your setup already needs Playwright locators; reuse them here and
-    // you get a durable artifact for free
-    await page.click('[data-testid="transfer"]');
-
-    // Name the evidence where you can see it. `observe` checks it now and
-    // fails the recording if it does not hold, so an assertion is never
-    // written from memory after the fact.
-    await observe('text=Only the owner can do that');
-  },
-});
-```
-
-### Shared setup steps
-
-The preamble to a bug is the same across most repros — sign in, open a workspace, get to a chat. Write it once:
-
-```ts
-// .repros/steps/workspace-chat.mjs
-import { defineStep } from 'fast-replay';
-
-export default defineStep({
-  name: 'workspace-chat',
-  description: 'Signed in and viewing a workspace chat',
-  requires: ['signed-in'],
-  ensures: '[data-testid="report-screen"]',   // checked after it runs
-  async run(page) { /* ... */ },
-});
-```
-
-```ts
-drive: async (page, { step, observe }) => {
-  await step('workspace-chat');                   // uses the stored account
-  await step('new-account', { plan: 'control' }); // when a bug needs something different
-  ...
-}
-```
-
-**Setup is referenced, not recorded.** The IR names the step; replay runs the function. So the recording holds only the bug flow, and fixing a step fixes every repro that uses it — inlined, the preamble is copied into each one and fixing the function fixes none of them.
-
-A step that fails reports as `COULD NOT VERIFY`, by name, with the file it lives in. It never reads as a verdict on the bug, because the flow never reached where the bug lives.
-
-Share the identical part; pass only what genuinely differs. `defaults` keeps the common call empty.
-
-`repro steps` lists what exists, and the MCP server exposes the same list — so an agent checks before writing a fourth sign-in helper.
-
-`ensures` is the part that earns its keep. When the login page moves, one step fails by name and says so; without it, every repro that walked through the preamble fails separately, somewhere further along, looking like unrelated bugs.
-
-**A sign-in step establishes a session once per project.** Mark it `establishesSession: true` and give it an `ensures` that is visible on every signed-in page (an account menu, not a home-screen element). The first recording signs in and stores the session under `.repros/sessions/`; later recordings and every replay restore it and skip the step. When the token expires, replay signs in once more, replaces the stored session and says so in its notes.
-
-```ts
-export default defineStep({
-  name: 'signed-in',
-  description: 'Signed in as the seed account',
-  establishesSession: true,
-  ensures: '[data-testid="account-menu"]',
-  async run(page) { /* credentials from process.env */ },
-});
-```
-
-Session files hold tokens and are never committed; `repro init` writes the ignore rules. (`repro record --profile ./.replay-profile` does the same for a fully manual recording.)
-
-### Extracting a shared step from existing repros
-
-The steps above assume you noticed the repetition up front. `repro extract` finds it after the fact:
-
-```bash
-repro extract                     # list step sequences repeated across repros; writes nothing
-repro extract --apply signed-in   # write .repros/steps/signed-in.mjs, rewrite the matched repros
-```
-
-Detection is structural — steps match on what they do, with volatile identifiers (row numbers, uuids, tokens) masked — and only a true prefix qualifies, because setup replays before recorded steps. A repro that matches only after masking (same shape, different values) is reported but never rewritten: parameterize it by hand. Naming the step, and judging whether it deserves `--session` (`establishesSession`), stays with you.
-
-The generated step embeds its steps as plain IR and replays them through the ordinary machinery — candidate ladder, identity checks, recorded waits (`replayFragment`). Edit selectors in the file like any IR, or replace `run()` with hand-written Playwright when you outgrow the recording.
-
-Recorded the same preamble again by hand? `repro extract` notices the new recording re-drives an existing extracted step and offers `repro extract --use <step>` to convert it instead of writing a duplicate. The MCP server exposes the same flow as `repro_extract`, so an agent can tidy up after finishing an issue and the next issue starts faster.
-
-To reuse a *session* across repros without extracting anything, seed the next recording from an existing one: `repro record next-bug --storage-state .repros/prev-bug/state.json`.
-
-For a repeated verification, keep the app booted between runs:
-
-```bash
-repro watch my-bug                # hold the browser open, replay on Enter
-```
-
-Cold boot is over half the wall clock on a heavy app. The MCP server keeps the browser warm **by default**: one issue means many `repro_run` calls against the same repro, so the page is held open between them. Reuse trades isolation for that speed — pass `reuse: false` for a verification that must stand on its own, and a call with `setup_command` opts out by itself (a warm page holds open the very state the command resets).
+Selectors are a ladder: test id, `name`, ARIA role + accessible name, labelled ancestor, stable CSS path, text. Build-generated class names are skipped. Before acting, replay checks the resolved element against what was recorded; if a list gained a row and a positional match landed on the wrong record, the run reports `COULD NOT VERIFY` instead of a verdict. A wrong answer you have no reason to doubt is worse than no answer.
 
 ## Results
 
@@ -261,21 +180,14 @@ Measured on one machine, same flow both ways.
 | Model calls | **0** | 1 per action |
 | Context added | ~120 tokens | ~700–2 000 |
 
-10-step flow: 20/20 consecutive replays, slowest 2.77 s.
+10-step flow: 20/20 consecutive replays, slowest 2.77 s. That is the cost of asking again, not of the whole job; the setup behind a real bug is paid once and the question is paid every time. In a real app it caught a **736–779 ms** window where a total failed to render, a state that heals before a snapshot returns, so a model-in-the-loop tool cannot see it. Two independent first passes with Playwright MCP concluded "no bug" and were wrong.
 
-Read that as the cost of *asking again*, not of the whole job — the setup behind a real bug dwarfs it. The point is that the setup is paid once and the question is paid every time.
+## Limits
 
-The sharper claim is not speed. In a real app it caught a **736–779 ms** window where a total failed to render — a state that heals before a snapshot returns, so a model-in-the-loop tool structurally cannot see it. Two independent first passes with Playwright MCP concluded "no bug" and were wrong.
-
-## Expectations
-
-Honest limits, from six benchmark rounds against two production codebases (React Native Web; React + Vite + Radix):
-
-- **If you already have a Playwright suite, keep using it.** Authoring a spec costs about what recording costs, and a spec is legible where an IR is not. This earns its keep for throwaway repros and agent loops, not as a test framework.
-- **You still have to get to the bug yourself.** Recording captures the observation; reaching the state it observes is your problem. `repro auto` from a bug description is not built.
-- **A bug with no console error or failed request needs one hand-written line** — `assertion.expectedWhenFixed` — or `--expect-fixed` refuses to answer rather than return a green that checked nothing.
-- **A flow that mutates server state is single-shot.** Use `--setup` to reset, or `{{random:name}}` placeholders to make inputs unique.
-- **It refuses rather than guesses.** If a selector resolves to something that is not what was recorded — a list that gained a row, so a positional match landed on the wrong record — the run reports `COULD NOT VERIFY` instead of a verdict. A wrong answer you have no reason to doubt is worse than no answer.
+- **If you already have a Playwright suite, keep using it.** This earns its keep for throwaway repros and agent loops, not as a test framework.
+- **You still have to get to the bug yourself.** Recording captures the observation; reaching the state it observes is your problem.
+- **A bug with no console error or failed request needs a hand-written assertion** (`repro assert`), or `--expect-fixed` refuses to answer.
+- **A flow that mutates server state is single-shot.** Use `--setup` to reset, or `{{random}}` / `{{random:label}}` placeholders to make inputs unique.
 - Records clicks, right-clicks, typing, selects, key presses, scrolls, hovers, navigation and going offline. Top frame only, no iframes; drag-and-drop and file upload are untested.
 
 ## Programmatic
@@ -287,12 +199,12 @@ const result = await run({ name: 'my-bug', expectFixed: true });
 if (!result.passed) console.log(result.failure.semantic, result.failure.artifacts.screenshot);
 ```
 
-The CLI and MCP server are both thin wrappers over these.
+The CLI and MCP server are thin wrappers over these.
 
 ## Develop
 
 ```bash
-npm test          # 245 tests, unit + real-browser integration
+npm test          # unit + real-browser integration
 npm run stress    # records once, replays 20x, fails on a single flake
 npm run demo      # examples/demo-app
 ```

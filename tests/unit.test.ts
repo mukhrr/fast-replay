@@ -28,6 +28,7 @@ function trace(over: Partial<RecordingTrace> = {}): RecordingTrace {
     documentLoads: [],
     network: [],
     console: [],
+    suspended: [],
     startedAt: 0,
     endedAt: 10_000,
     baseUrl: BASE,
@@ -317,6 +318,72 @@ describe('deriveAssertion', () => {
     );
     expect(assertion.invariants.noFailedRequests).toBe(true);
     expect(assertion.observedAtRecord?.failedRequests).toEqual([]);
+  });
+});
+
+describe('setup traffic and the recorded signature', () => {
+  const setupInterval = [{ from: 1_000, to: 2_000 }];
+  const duringSetup = {
+    console: [{ kind: 'console' as const, text: 'TypeError: during sign-in', t: 1_500 }],
+    network: [
+      {
+        kind: 'network' as const,
+        method: 'POST',
+        url: `${BASE}/api/session`,
+        startedAt: 1_500,
+        settledAt: 1_600,
+        status: 401,
+        failed: true,
+      },
+    ],
+  };
+
+  it('ignores what a shared step produced while capture was suspended', () => {
+    // Replay cuts the setup interval out of the verdict. A signature drawn from
+    // setup would never recur there, and --expect-fixed would report the bug
+    // fixed on a recording nobody has touched.
+    const assertion = deriveAssertion([], trace({ ...duringSetup, suspended: setupInterval }));
+
+    expect(assertion.observedAtRecord?.consoleErrors).toEqual([]);
+    expect(assertion.observedAtRecord?.ambientConsoleErrors).toEqual([]);
+    expect(assertion.observedAtRecord?.failedRequests).toEqual([]);
+    // Empty signature and no criterion: --expect-fixed refuses instead of guessing.
+    expect(assertion.invariants.noConsoleErrors).toBe(true);
+    expect(assertion.invariants.noFailedRequests).toBe(true);
+  });
+
+  it('keeps what the bug flow itself produced, and gives setup the tie', () => {
+    const assertion = deriveAssertion(
+      [],
+      trace({
+        suspended: setupInterval,
+        console: [
+          ...duringSetup.console,
+          // Same millisecond as resume: still the step's, see buildAssertion.
+          { kind: 'console', text: 'TypeError: same millisecond as resume', t: 2_000 },
+          { kind: 'console', text: 'TypeError: boom', t: 3_000 },
+        ],
+        network: [
+          ...duringSetup.network,
+          {
+            kind: 'network',
+            method: 'DELETE',
+            url: `${BASE}/api/sensors/4`,
+            startedAt: 3_000,
+            settledAt: 3_100,
+            status: 500,
+            failed: true,
+          },
+        ],
+      }),
+    );
+
+    expect(assertion.observedAtRecord?.consoleErrors).toEqual(['TypeError: boom']);
+    expect(assertion.observedAtRecord?.failedRequests).toEqual([
+      { urlPattern: '/api/sensors/*', method: 'DELETE', status: 500 },
+    ]);
+    expect(assertion.invariants.noConsoleErrors).toBe(false);
+    expect(assertion.invariants.noFailedRequests).toBe(false);
   });
 });
 

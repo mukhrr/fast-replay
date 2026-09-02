@@ -94,6 +94,12 @@ export interface RecordingTrace {
   documentLoads: number[];
   network: RawNetworkEvent[];
   console: RawConsoleEvent[];
+  /**
+   * When capture was suspended for a shared step. The compiled signature skips
+   * these intervals, as replay skips its own setup interval; `to` is open
+   * (Infinity) until `resume`.
+   */
+  suspended: { from: number; to: number }[];
   startedAt: number;
   endedAt: number;
   baseUrl: string;

@@ -347,16 +347,17 @@ describe('replay trusts a proven session and heals it once when it dies', () => 
     const state = path.join(root, '.repros', 'sessions', `signed-in-noisy@${HOST}.json`);
     await server.reset();
     const noisy = await rec('heal-noise', [{ step: 'signed-in-noisy' }]);
-    // The sign-in's 404 is in the recorded signature because the recording
-    // signed in too. A warm replay never signs in, so only a healed run can
-    // fire it again, and it must not read as the bug coming back.
-    expect(noisy.repro.assertion.observedAtRecord?.failedRequests.map((f) => f.urlPattern)).toContain(
-      '/api/does-not-exist',
-    );
+    // The sign-in's 404 is setup traffic, not the bug, so it stays out of the
+    // recorded signature and noFailedRequests stays live. A warm replay never
+    // signs in, so only a healed run can fire it again, and it must not read
+    // as a failed request of the bug flow.
+    const recorded = noisy.repro.assertion.observedAtRecord?.failedRequests.map((f) => f.urlPattern);
+    expect(recorded).not.toContain('/api/does-not-exist');
+    expect(noisy.repro.assertion.invariants.noFailedRequests).toBe(true);
 
     await setToken(state, 'stale');
     await server.reset();
-    const healed = await run({ name: 'heal-noise', root, expectFixed: true });
+    const healed = await run({ name: 'heal-noise', root });
     expect(healed.passed, JSON.stringify(healed.failure)).toBe(true);
     expect(healed.notes).toContain(
       'session re-established via step "signed-in-noisy" (stored session had expired)',

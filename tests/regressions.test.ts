@@ -31,6 +31,7 @@ function trace(over: Partial<RecordingTrace> = {}): RecordingTrace {
     documentLoads: [],
     network: [],
     console: [],
+    suspended: [],
     startedAt: 0,
     endedAt: 10_000,
     baseUrl: BASE,

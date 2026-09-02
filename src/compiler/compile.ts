@@ -405,10 +405,24 @@ export function deriveAssertion(
 
 /** Everything that does not depend on where the criterion came from. */
 function buildAssertion(finalState: FinalState, trace: RecordingTrace): Assertion {
-  const { signature: consoleErrors, ambient: ambientConsoleErrors } = splitConsole(trace);
+  // Replay cuts the setup interval out of the verdict, so the signature is drawn
+  // from the same window: a sign-in that fails a same-origin request would
+  // otherwise be the recorded bug, never recur at replay, and read as fixed.
+  // Waits and ambient patterns keep the whole trace; only the verdict inputs
+  // are windowed, as in run.ts. Closed at `to`: the event of a step's last
+  // statement arrives in the same millisecond as resume, and nothing in the bug
+  // flow can act until a round trip later.
+  const outsideSetup = (t: number): boolean =>
+    !trace.suspended.some((s) => t >= s.from && t <= s.to);
+  const bugTrace: RecordingTrace = {
+    ...trace,
+    console: trace.console.filter((c) => outsideSetup(c.t)),
+    network: trace.network.filter((n) => outsideSetup(n.startedAt)),
+  };
+  const { signature: consoleErrors, ambient: ambientConsoleErrors } = splitConsole(bugTrace);
 
   // Third-party failures are not this app's bug and must not disable the check.
-  const failedRequests = trace.network
+  const failedRequests = bugTrace.network
     .filter((n) => n.failed && isSameOrigin(n.url, trace.baseUrl) && !isIncidentalRequest(n.url))
     .map((n) => ({
       urlPattern: normalizeUrlPattern(n.url, trace.baseUrl),

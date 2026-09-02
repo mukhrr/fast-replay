@@ -14,7 +14,7 @@ A session-establishing step ran once per recording, so ten issues still meant te
 
 The guard that makes this safe: nothing probes without proof. A probe on a start path where `ensures` is never visible would time out and sign in on every run, which is the failure this exists to remove. Record time proves the check per start path and marks the repro `sessionCheck` only when it held; a repro without the mark, including every repro from an earlier release, restores and skips exactly as before. Name something visible on every signed-in page in a session step's `ensures`.
 
-Two small fixes on the way: a navigation performed by a setup step is no longer captured, so a sign-in that reloads stops leaving a `goto` step in the IR; and a repro cannot be named `config`, `steps`, `sessions` or `drive`.
+Three small fixes on the way: a navigation performed by a setup step is no longer captured, so a sign-in that reloads stops leaving a `goto` step in the IR; what a setup step logs or requests is no longer part of the recorded bug signature, since replay already cuts the setup interval out of the verdict and a signature drawn from it would have read as fixed on every run; and a repro cannot be named `config`, `steps`, `sessions` or `drive`.
 
 ### `repro init`, and knowing the project before the first call
 

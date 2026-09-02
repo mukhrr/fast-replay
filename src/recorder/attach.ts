@@ -64,6 +64,7 @@ export async function attachRecorder(
   const navigations: RawNavigationEvent[] = [];
   const focus: RawFocusEvent[] = [];
   const documentLoads: number[] = [];
+  const suspensions: { from: number; to: number }[] = [];
   const reactions: ReactionCollector = collectReactions(context);
 
   const trace: RecordingTrace = {
@@ -75,6 +76,7 @@ export async function attachRecorder(
     documentLoads,
     network: reactions.network,
     console: reactions.console,
+    suspended: suspensions,
     startedAt: Date.now(),
     endedAt: 0,
     baseUrl: options.baseUrl,
@@ -159,15 +161,22 @@ export async function attachRecorder(
     stopped,
     stop,
     suspend() {
+      if (suspended) return;
       suspended = true;
+      suspensions.push({ from: Date.now(), to: Number.POSITIVE_INFINITY });
     },
     resume() {
+      if (!suspended) return;
       suspended = false;
+      suspensions[suspensions.length - 1]!.to = Date.now();
     },
     detach() {
       if (detached) return;
       detached = true;
       trace.endedAt = Date.now();
+      // A step still running at detach ends with the recording.
+      if (suspended) suspensions[suspensions.length - 1]!.to = trace.endedAt;
+      suspended = false;
       reactions.detach();
       context.off('page', watchPage);
     },

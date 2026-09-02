@@ -213,10 +213,11 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
     await page.goto(startUrl, { waitUntil: 'domcontentloaded' });
 
     // The setup interval, probe and heal included, is not the bug flow: a
-    // sign-in that fails a same-origin request is in the recorded signature
-    // because the recording signed in too, so a healed run would otherwise
-    // report the bug present on a fixed app. Only this interval is cut from the
-    // verdict, so what the page did while booting counts exactly as it did.
+    // sign-in that fails a same-origin request would otherwise trip
+    // noFailedRequests on a fixed app. The recorder leaves the same interval
+    // out of the signature (buildAssertion), so both sides judge one window.
+    // Only this interval is cut, so what the page did while booting counts
+    // exactly as it did.
     const setupStartedAt = Date.now();
     let setupDoneAt = startedAt;
 
@@ -567,8 +568,10 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
       }
     }
 
-    // Everything the bug flow itself produced. See setupStartedAt.
-    const outsideSetup = (t: number): boolean => t < setupStartedAt || t >= setupDoneAt;
+    // Everything the bug flow itself produced. See setupStartedAt. Closed at
+    // setupDoneAt, as in buildAssertion: setup's last event shares its
+    // millisecond, and the first step cannot act until a round trip later.
+    const outsideSetup = (t: number): boolean => t < setupStartedAt || t > setupDoneAt;
     const bugNetwork = reactions.network.filter((n) => outsideSetup(n.startedAt));
     const bugConsole = reactions.console.filter((c) => outsideSetup(c.t));
 

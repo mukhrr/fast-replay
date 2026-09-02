@@ -97,6 +97,18 @@ beforeAll(async () => {
        async run() {},
      };`,
   );
+  await step(
+    'noisy-setup',
+    `export default {
+       name: 'noisy-setup',
+       description: 'On the sensors list, after a preamble that logs an error',
+       ensures: '[data-testid="sensor-list"]',
+       async run(page) {
+         await page.waitForSelector('[data-testid="sensor-list"]');
+         await page.evaluate(() => console.error('SetupError: token refresh failed'));
+       },
+     };`,
+  );
 }, 60_000);
 
 afterAll(async () => {
@@ -112,6 +124,7 @@ describe('discovery', () => {
       'chatting',
       'lies',
       'named',
+      'noisy-setup',
       'one-added',
       'sensors-loaded',
       'session',
@@ -125,7 +138,7 @@ describe('discovery', () => {
     await writeFile(path.join(stepsDir, 'broken.mjs'), 'export default { nope: true };', 'utf8');
     try {
       const { steps, errors } = await loadSteps(stepsDir);
-      expect(steps.size).toBe(6);
+      expect(steps.size).toBe(7);
       expect(errors[0]?.message).toContain('defineStep');
     } finally {
       await rm(path.join(stepsDir, 'broken.mjs'), { force: true });
@@ -288,6 +301,32 @@ describe('setup is referenced, not recorded', () => {
     expect(repro.setup).toEqual([{ step: 'one-added' }]);
     expect(repro.steps).toHaveLength(1);
     expect(repro.steps[0]?.target?.semantic).toContain('Delete Probe');
+  });
+
+  it('keeps what setup logged out of the recorded signature', async () => {
+    // Replay cuts the setup interval out of the verdict. A signature drawn from
+    // setup would never recur there, so --expect-fixed would report BUG FIXED
+    // for a bug nobody fixed.
+    await server.reset();
+    const { repro } = await record({
+      name: 'noisy-preamble',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      drive: async (page, { step, observe }) => {
+        await step('noisy-setup');
+        await page.fill('[data-testid="sensor-name-input"]', 'Quiet');
+        await page.click('[data-testid="add-sensor"]');
+        await page.waitForSelector('[data-testid="sensor-row-4"]');
+        await observe('[data-testid="sensor-row-4"]');
+      },
+    });
+
+    expect(repro.setup).toEqual([{ step: 'noisy-setup' }]);
+    const observed = repro.assertion.observedAtRecord;
+    expect(observed?.consoleErrors ?? []).not.toContain('SetupError: token refresh failed');
+    expect(observed?.ambientConsoleErrors ?? []).not.toContain('SetupError: token refresh failed');
+    expect(repro.assertion.invariants.noConsoleErrors).toBe(true);
   });
 
   it('runs the referenced setup at replay and passes', async () => {

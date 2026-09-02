@@ -58,4 +58,10 @@ describe('project config', () => {
     }
     expect(() => assertValidName('checkout-crash')).not.toThrow();
   });
+
+  it('refuses rather than defaults when the file exists but cannot be read', async () => {
+    // A directory where the file should be is the portable way to make readFile fail with something other than ENOENT.
+    await mkdir(path.join(root, CONFIG_FILE), { recursive: true });
+    await expect(loadConfig(root)).rejects.toThrow(/Could not read \.repros\/config\.json/);
+  });
 });

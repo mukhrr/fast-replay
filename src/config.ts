@@ -6,9 +6,8 @@ import { REPROS_DIR } from './ir/io.js';
 /**
  * Project settings, committed alongside the shared steps.
  *
- * Deliberately one field. Repros are disposable and sessions hold tokens, so
- * this file is the only thing under .repros/ besides steps that a team shares,
- * and every field added here is a decision every project has to make.
+ * Deliberately one field: everything else under .repros/ is disposable or
+ * holds tokens, so every field added here is a decision every project has to make.
  */
 export const ConfigSchema = z.object({
   /** How many repros must share a prefix before the tool suggests extracting it. */
@@ -24,8 +23,11 @@ export async function loadConfig(root = process.cwd()): Promise<Config> {
   let raw: string;
   try {
     raw = await readFile(file, 'utf8');
-  } catch {
-    return DEFAULT_CONFIG;
+  } catch (err) {
+    // Only a file that does not exist means "use the defaults". Anything else
+    // silently turning into the defaults would hide a committed setting.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return DEFAULT_CONFIG;
+    throw new Error(`Could not read ${CONFIG_FILE}: ${(err as Error).message}`);
   }
   let data: unknown;
   try {

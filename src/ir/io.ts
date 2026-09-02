@@ -21,6 +21,13 @@ export interface ReproPaths {
 const NAME_RE = /^[a-z0-9][a-z0-9._-]*$/i;
 
 /**
+ * Subdirectories and files that .repros/ holds besides repros. A repro with one
+ * of these names would write its IR over the config or its sidecar dir over
+ * the steps.
+ */
+const RESERVED_NAMES = new Set(['config', 'steps', 'sessions', 'drive']);
+
+/**
  * Repro names become path segments, so reject anything that could escape the
  * .repros directory or collide with the sidecar-dir convention.
  */
@@ -29,6 +36,9 @@ export function assertValidName(name: string): void {
     throw new Error(
       `Invalid repro name "${name}". Use letters, digits, dot, dash and underscore; must start alphanumeric.`,
     );
+  }
+  if (RESERVED_NAMES.has(name.toLowerCase())) {
+    throw new Error(`"${name}" is reserved for the .repros/ layout and cannot name a repro.`);
   }
 }
 
@@ -128,7 +138,9 @@ export async function listRepros(root = process.cwd()): Promise<ReproSummary[]> 
     return [];
   }
 
-  const names = entries.filter((e) => e.endsWith('.json')).map((e) => e.slice(0, -'.json'.length));
+  const names = entries
+    .filter((e) => e.endsWith('.json') && !RESERVED_NAMES.has(e.slice(0, -'.json'.length)))
+    .map((e) => e.slice(0, -'.json'.length));
 
   const summaries = await Promise.all(
     names.map(async (name): Promise<ReproSummary> => {

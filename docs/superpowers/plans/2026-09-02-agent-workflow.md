@@ -2445,15 +2445,19 @@ Append inside `describe('mcp server', ...)`:
           await page.waitForSelector('[data-testid="sensor-row-1"]');
           await page.click('[data-testid="nav-reports"]');
           await page.waitForSelector('[data-testid="report-title-input"]');
-          await page.fill('[data-testid="report-title-input"]', 'Weekly');
-          await observe('[data-testid="report-title-input"]');
+          // A second click, not a fill: the recorder commits a fill only on
+          // change/blur or before the next action, so a recording that ends on
+          // one would drop it and this test is about re-import, not capture.
+          await page.click('[data-testid="nav-sensors"]');
+          await page.waitForSelector('[data-testid="sensor-list"]');
+          await observe('[data-testid="sensor-list"]');
         },
       };`,
       'utf8',
     );
     await server.reset();
     const result = await call('repro_record', {
-      name: 'nav-and-fill',
+      name: 'nav-and-back',
       url: server.baseUrl,
       drive: '.repros/drive/nav-only.mjs',
     });

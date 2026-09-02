@@ -267,4 +267,31 @@ describe('one sign-in per project, not per repro', () => {
     expect(j.repro.sessionCheck).toEqual({ step: 'signed-in' });
     expect(j.repro.steps.map((s) => s.action)).not.toContain('goto');
   });
+
+  it('does not retract proof when drive() signs in from a page other than the start path', async () => {
+    const before = (await readMetaFile('signed-in')).provenPaths;
+    expect(before).toContain('/');
+    resetSignIns();
+    await server.reset();
+    const k = await record({
+      name: 'k',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      drive: async (page, api) => {
+        await page.waitForSelector('[data-testid="sensor-row-1"]');
+        await page.click('[data-testid="nav-reports"]');
+        await page.waitForSelector('[data-testid="report-title-input"]');
+        await api.step('signed-in');
+        await api.observe('[data-testid="signed-in-badge"]');
+      },
+    });
+    expect(signIns()).toBe(1);
+    expect(k.session?.status).toBe('established');
+    expect(k.session?.proven).toBe(false);
+    expect(k.repro.sessionCheck).toBeUndefined();
+    expect(k.repro.storageStatePath).toBe(`.repros/sessions/signed-in@${HOST}.json`);
+    // Nothing was measured on the start path, so nothing was retracted.
+    expect((await readMetaFile('signed-in')).provenPaths).toEqual(before);
+  });
 });

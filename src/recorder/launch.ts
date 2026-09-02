@@ -211,7 +211,12 @@ export async function launchRecording(
       const files = sessionFiles(root, key, host);
       const onStartPath = pathOf(page.url(), options.baseUrl) === startPath;
       const proven = onStartPath && (await ensuresVisible(page, only));
-      await persistSession(files, state, { path: startPath, proven });
+      // Off the start path nothing was measured, so the sidecar must not be
+      // told "not proven": that would retract a path another recording proved.
+      await persistSession(onStartPath ? files : { state: files.state, meta: null }, state, {
+        path: startPath,
+        proven,
+      });
       sessionOutcome = { step: only.name, key, host, status: 'established', proven, statePath: files.state };
     };
 

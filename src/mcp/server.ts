@@ -265,6 +265,7 @@ export async function createReplayServer(root = process.cwd()): Promise<ReplaySe
             root,
             headed: Boolean(headed),
             envUrl: env_url ?? null,
+            baseUrl: base_url ?? null,
             profileDir: profile_dir ?? null,
             // The warm context lives inside the pooled browser, so holding a
             // session open does not hold a second Chromium open.

@@ -705,15 +705,18 @@ function storageStatePath(repro: Repro, root: string): string | null {
 export function resolveSessionSeed(
   repro: Repro,
   root: string,
-  options: { envUrl?: string | null; profileDir?: string | null },
+  options: { envUrl?: string | null; baseUrl?: string | null; profileDir?: string | null },
 ): { storageStatePath: string | null; storageState: Record<string, unknown> | null } {
   if (options.profileDir) return { storageStatePath: null, storageState: null };
   // A session minted against the target host is exact. Only when there is
-  // none does the recorded host's session get retargeted in memory.
-  if (options.envUrl && repro.storageStatePath) {
+  // none does the recorded host's session get retargeted in memory. The heal
+  // writes under whichever origin the run drives, so the read looks there too;
+  // without that, --url healed on every run and never read its own file.
+  const targetUrl = options.envUrl ?? options.baseUrl ?? null;
+  if (targetUrl && repro.storageStatePath && hostSlug(targetUrl) !== hostSlug(repro.baseUrl)) {
     const parsed = parseSessionPath(repro.storageStatePath);
     if (parsed) {
-      const own = sessionFiles(root, parsed.key, hostSlug(options.envUrl)).state;
+      const own = sessionFiles(root, parsed.key, hostSlug(targetUrl)).state;
       if (readSessionState(own)) return { storageStatePath: own, storageState: null };
     }
   }

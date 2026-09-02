@@ -498,6 +498,29 @@ describe('replay trusts a proven session and heals it once when it dies', () => 
     }
   });
 
+  it('under --url, reads back the session its own heal wrote', async () => {
+    const other = await startDemoServer(5446);
+    const otherState = path.join(root, '.repros', 'sessions', 'signed-in@localhost_5446.json');
+    try {
+      await rm(otherState, { force: true });
+      await setToken(aState(), 'stale');
+      resetSignIns();
+      await other.reset();
+      const cold = await run({ name: 'a', root, baseUrl: other.baseUrl });
+      expect(cold.passed, JSON.stringify(cold.failure)).toBe(true);
+      expect(signIns()).toBe(1);
+
+      await other.reset();
+      const warm = await run({ name: 'a', root, baseUrl: other.baseUrl });
+      expect(warm.passed, JSON.stringify(warm.failure)).toBe(true);
+      expect(warm.notes.join('\n')).not.toMatch(/re-established/);
+      expect(signIns()).toBe(1);
+    } finally {
+      await other.close();
+      await setToken(aState(), 'ok');
+    }
+  });
+
   it('under a persistent profile, heals but writes nothing to the sessions dir', async () => {
     const { readdir, stat } = await import('node:fs/promises');
     const profile = await mkdtemp(path.join(tmpdir(), 'replay-profile-'));

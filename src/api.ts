@@ -192,6 +192,12 @@ export async function openSession(options: {
    * `--env` opened with the recorded origin's cookies and replayed signed out.
    */
   envUrl?: string | null;
+  /**
+   * Where the replays will navigate, when only navigation is being overridden.
+   * A session minted against that host is the one to seed, exactly as `runRepro`
+   * would seed it, so a warm run reads the file its own heals write.
+   */
+  baseUrl?: string | null;
   /** Hold the session in a persistent Chromium profile instead of a seeded fresh context. */
   profileDir?: string | null;
   /**

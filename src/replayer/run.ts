@@ -20,6 +20,7 @@ import {
 import { IdentityMismatchError, TargetResolutionError, type ResolveTimeouts } from './resolve.js';
 import { performStep, rebase } from './perform.js';
 import {
+  canPersistHeal,
   establishSession,
   hostSlug,
   parseSessionPath,
@@ -242,10 +243,32 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
       // A restored session is trusted blindly unless record time proved this
       // step's ensures visible on this start path. Probing without that proof
       // would time out and sign in on every replay.
-      const target = haveSession && repro.sessionCheck
+      const check = haveSession && repro.sessionCheck
         ? replaySessionTarget({ repro, root, baseUrl, steps })
-        : null;
+        : ({ status: 'none' } as const);
+      if (check.status === 'refuse') {
+        return await fail(
+          { paths, page, repro, reactions, timings: [], startedAt, since: startedAt, expectFixed, notes, baseUrl },
+          {
+            stepId: 'setup',
+            stepIndex: 0,
+            semantic: `sessionCheck "${check.step}"`,
+            kind: 'infrastructure',
+            expected: 'sessionCheck to name a step with establishesSession and ensures',
+            observed:
+              `sessionCheck names "${check.step}", which is not a session step with ensures; ` +
+              'remove it from the repro or fix the step',
+          },
+        );
+      }
+      const target = check.status === 'target' ? check.target : null;
       if (target) {
+        const persist = canPersistHeal({
+          files: target.files,
+          root,
+          envUrl: options.envUrl,
+          profileDir: options.profileDir,
+        });
         try {
           const outcome = await establishSession({
             page,
@@ -256,7 +279,7 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
             startUrl,
             startPath: repro.startPath,
             probe: true,
-            persist: !options.profileDir,
+            persist: persist.ok,
           });
           if (outcome.status === 're-established') {
             if (!outcome.proven) {
@@ -268,6 +291,7 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
               );
             }
             notes.push(`session re-established via step "${target.step.name}" (stored session had expired)`);
+            if (!persist.ok) notes.push(`session not stored: ${persist.reason}`);
           }
         } catch (err) {
           // Setup that could not run says nothing about the bug.

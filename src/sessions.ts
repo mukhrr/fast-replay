@@ -250,6 +250,12 @@ export async function establishSession(o: {
   return { status: o.probe ? 're-established' : 'established', proven };
 }
 
+/** The outcome of reading a repro's `sessionCheck`, so replay can refuse by name. */
+export type SessionCheckResult =
+  | { status: 'none' }
+  | { status: 'target'; target: SessionTarget }
+  | { status: 'refuse'; step: string };
+
 /**
  * What replay verifies, for a repro carrying `sessionCheck`.
  *
@@ -257,17 +263,22 @@ export async function establishSession(o: {
  * retargeted path still resolves. The host is the one replay is driving, so a
  * heal under --env writes the target host's file and leaves the recorded
  * host's alone. A per-repro state file keeps its own path and has no sidecar.
+ *
+ * A check naming anything but a session step with `ensures` is refused rather
+ * than ignored: a probe that happens to pass on the start path would mark an
+ * ordinary setup step as already run, and the repro would replay without the
+ * effect that step exists to produce.
  */
 export function replaySessionTarget(o: {
   repro: Repro;
   root: string;
   baseUrl: string;
   steps: Map<string, LoadedStep>;
-}): SessionTarget | null {
+}): SessionCheckResult {
   const check = o.repro.sessionCheck;
-  if (!check || !o.repro.storageStatePath) return null;
+  if (!check || !o.repro.storageStatePath) return { status: 'none' };
   const step = o.steps.get(check.step);
-  if (!step?.ensures) return null;
+  if (!step?.establishesSession || !step.ensures) return { status: 'refuse', step: check.step };
   const params = o.repro.setup.find((s) => s.step === step.name)?.params ?? {};
   const host = hostSlug(o.baseUrl);
   const parsed = parseSessionPath(o.repro.storageStatePath);
@@ -275,7 +286,32 @@ export function replaySessionTarget(o: {
   const files: SessionFiles = parsed
     ? sessionFiles(o.root, key, host)
     : { state: path.resolve(o.root, o.repro.storageStatePath), meta: null };
-  return { step, params, key, host, files };
+  return { status: 'target', target: { step, params, key, host, files } };
+}
+
+/**
+ * May a replay heal write the session it just minted back to disk?
+ *
+ * `storageStatePath` is a bare string in a hand-editable IR, so the write
+ * target is confined to the project's own `.repros/`. Under --env the file a
+ * per-repro state path names belongs to the recorded origin, and filling it
+ * with the target host's cookies would silently break the recorded one.
+ */
+export function canPersistHeal(o: {
+  files: SessionFiles;
+  root: string;
+  envUrl?: string | null;
+  profileDir?: string | null;
+}): { ok: true } | { ok: false; reason: string } {
+  if (o.profileDir) return { ok: false, reason: 'the persistent profile holds its own session' };
+  const relative = path.relative(path.join(o.root, REPROS_DIR), o.files.state);
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    return { ok: false, reason: `${path.relative(o.root, o.files.state)} is outside ${REPROS_DIR}/` };
+  }
+  if (o.envUrl && !o.files.meta) {
+    return { ok: false, reason: "--env would overwrite this repro's own state file" };
+  }
+  return { ok: true };
 }
 
 /** One line for the record output, shared by the CLI and the MCP server. */

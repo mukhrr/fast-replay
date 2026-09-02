@@ -451,6 +451,53 @@ describe('replay trusts a proven session and heals it once when it dies', () => 
     }
   });
 
+  it('refuses by name when sessionCheck does not name a session step', async () => {
+    const original = await readFile(aIr(), 'utf8');
+    const ir = JSON.parse(original) as Record<string, unknown>;
+    ir.sessionCheck = { step: 'on-reports' };
+    await writeFile(aIr(), JSON.stringify(ir, null, 2), 'utf8');
+    try {
+      await server.reset();
+      const result = await run({ name: 'a', root });
+      expect(result.passed).toBe(false);
+      expect(result.failure?.kind).toBe('infrastructure');
+      expect(result.failure?.semantic).toBe('sessionCheck "on-reports"');
+      expect(result.failure?.observed).toContain('on-reports');
+      expect(result.failure?.observed).toContain('not a session step with ensures');
+    } finally {
+      await writeFile(aIr(), original, 'utf8');
+    }
+  });
+
+  it('under --env, refuses to write a heal into a per-repro state file', async () => {
+    const other = await startDemoServer(5446);
+    const ownState = path.join(root, '.repros/a/state.json');
+    const original = await readFile(aIr(), 'utf8');
+    const ir = JSON.parse(original) as Record<string, unknown>;
+    ir.storageStatePath = '.repros/a/state.json';
+    await mkdir(path.join(root, '.repros/a'), { recursive: true });
+    await writeFile(ownState, await readFile(aState(), 'utf8'), 'utf8');
+    await setToken(ownState, 'stale');
+    await writeFile(aIr(), JSON.stringify(ir, null, 2), 'utf8');
+    const before = await readFile(ownState, 'utf8');
+    try {
+      resetSignIns();
+      await other.reset();
+      const healed = await run({ name: 'a', root, envUrl: other.baseUrl });
+      expect(healed.passed, JSON.stringify(healed.failure)).toBe(true);
+      expect(healed.notes.join('\n')).toMatch(/re-established/);
+      expect(healed.notes.join('\n')).toMatch(/session not stored: --env/);
+      expect(signIns()).toBe(1);
+      // The file belongs to the recorded origin; the target host's cookies
+      // must not land in it.
+      expect(await readFile(ownState, 'utf8')).toBe(before);
+    } finally {
+      await other.close();
+      await writeFile(aIr(), original, 'utf8');
+      await rm(ownState, { force: true });
+    }
+  });
+
   it('under a persistent profile, heals but writes nothing to the sessions dir', async () => {
     const { readdir, stat } = await import('node:fs/promises');
     const profile = await mkdtemp(path.join(tmpdir(), 'replay-profile-'));

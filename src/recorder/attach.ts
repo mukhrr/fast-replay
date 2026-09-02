@@ -116,12 +116,17 @@ export async function attachRecorder(
 
   const watchPage = (page: Page): void => {
     page.on('framenavigated', (frame: Frame) => {
-      if (frame !== page.mainFrame()) return;
+      // Setup runs while capture is suspended, and a sign-in that navigates
+      // would otherwise compile to a goto step nobody recorded.
+      if (suspended || frame !== page.mainFrame()) return;
       navigations.push({ kind: 'navigation', url: frame.url(), t: Date.now() });
     });
     // Fires only when a new document is actually parsed, so it distinguishes a
     // real navigation from client-side routing.
-    page.on('domcontentloaded', () => documentLoads.push(Date.now()));
+    page.on('domcontentloaded', () => {
+      if (suspended) return;
+      documentLoads.push(Date.now());
+    });
   };
 
   context.on('page', watchPage);

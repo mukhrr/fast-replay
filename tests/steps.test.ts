@@ -62,16 +62,18 @@ beforeAll(async () => {
   );
   await step(
     'session',
-    `let runs = 0;
-     export default {
+    `export default {
        name: 'session',
        description: 'Establishes a session (counts its runs on globalThis)',
        establishesSession: true,
-       ensures: '[data-testid="sensor-list"]',
+       ensures: '[data-testid="signed-in-badge"]',
+       ensuresTimeoutMs: 3000,
        async run(page) {
          globalThis.__sessionRuns = (globalThis.__sessionRuns ?? 0) + 1;
          await page.evaluate(() => localStorage.setItem('replay-token', 'ok'));
-         await page.waitForSelector('[data-testid="sensor-list"]');
+         // A real sign-in lands on a fresh document; the badge reads the token at mount.
+         await page.reload({ waitUntil: 'domcontentloaded' });
+         await page.waitForSelector('[data-testid="signed-in-badge"]');
        },
      };`,
   );
@@ -188,7 +190,7 @@ describe('a session step runs once, not per replay', () => {
     // verification and minted a fresh server session each time.
     (globalThis as unknown as { __sessionRuns: number }).__sessionRuns = 0;
     await server.reset();
-    await record({
+    const { repro } = await record({
       name: 'sessioned',
       baseUrl: server.baseUrl,
       root,
@@ -199,6 +201,9 @@ describe('a session step runs once, not per replay', () => {
       },
     });
     expect((globalThis as unknown as { __sessionRuns: number }).__sessionRuns).toBe(1);
+    // The step reloaded the page. Setup is referenced, not recorded, so that
+    // navigation must not surface as a goto step in the IR.
+    expect(repro.steps.map((s) => s.action)).not.toContain('goto');
 
     (globalThis as unknown as { __sessionRuns: number }).__sessionRuns = 0;
     for (let i = 0; i < 3; i++) {

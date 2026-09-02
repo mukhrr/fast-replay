@@ -18,6 +18,17 @@ const TOAST_MS = 4_000;
 export function App() {
   const [pathname, navigate] = useRoute();
 
+  // Read once at mount, like an app that decodes its token on boot. The tests'
+  // sign-in step reloads after setting it, the way a real sign-in lands on a
+  // fresh document.
+  const [signedIn] = useState(() => {
+    try {
+      return localStorage.getItem('replay-token') === 'ok';
+    } catch {
+      return false;
+    }
+  });
+
   return (
     <div className="app">
       <header className="topbar">
@@ -40,6 +51,11 @@ export function App() {
             Reports
           </button>
         </nav>
+        {signedIn && (
+          <span className="badge" data-testid="signed-in-badge">
+            signed in
+          </span>
+        )}
       </header>
       <main>{pathname === '/reports' ? <ReportsPage /> : <SensorsPage />}</main>
     </div>

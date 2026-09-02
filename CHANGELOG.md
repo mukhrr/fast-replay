@@ -20,6 +20,8 @@ Two small fixes on the way: a navigation performed by a setup step is no longer 
 
 Steps lived inside a directory most projects ignore as a whole, so the one durable thing in `.repros/` did not travel with the repo. `repro init` writes `.repros/*` with exceptions for `steps/` and `config.json` to `.gitignore`, writes the config, and prints the MCP client line plus a workflow block for CLAUDE.md. The MCP server sends that same workflow as its `instructions`, followed by the project's steps, stored sessions, repros and pending extractions, so an agent starts informed rather than discovering the project one tool call at a time.
 
+Breaking for programmatic consumers: `createServer` and `createReplayServer` are now async, because the instructions they send are built from the project on disk.
+
 `.repros/config.json` holds `extractThreshold` (default 4). Once that many repros share a prefix, `repro record`, `repro_record`, `repro list` and `repro_list` say so in one line. Extraction is still applied only by an explicit, named call, and `repro_run` stays about the bug.
 
 ## 0.12.0 — 2026-07-28

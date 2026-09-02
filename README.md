@@ -57,7 +57,7 @@ Exit `0` on pass, `1` on fail. On failure you get the failing step, what it does
 | `--storage-state <file>` / `--profile <dir>` | get past a login |
 | `--setup <cmd>` | reset state before replaying |
 | `--timeout-scale <n>` | multiply recorded waits, for a slower machine |
-| `--drive <file>` | record by running a drive file, headless; `--headed` to watch |
+| `--drive <file>` | record only: record by running a drive file, headless; `--headed` to watch |
 
 `repro run` answers in terms of the bug — `BUG REPRODUCED` / `BUG DID NOT REPRODUCE`, and with `--expect-fixed`, `BUG FIXED` / `BUG STILL PRESENT`. A run that could not drive the app says `COULD NOT VERIFY` instead of passing judgement on the bug.
 

@@ -10,6 +10,7 @@ import {
   list,
   loadDrive,
   openSession,
+  parseViewport,
   PartialRecordingError,
   readRepro,
   record,
@@ -465,12 +466,6 @@ function reportFail(result: RunResult): void {
       if (file) console.log(dim(`    ${label.padEnd(11)}${path.relative(process.cwd(), file)}`));
     }
   }
-}
-
-function parseViewport(value: string): { width: number; height: number } {
-  const match = /^(\d+)x(\d+)$/.exec(value.trim());
-  if (!match) throw new Error(`Invalid --viewport "${value}". Expected WxH, e.g. 1440x900.`);
-  return { width: Number(match[1]), height: Number(match[2]) };
 }
 
 async function main(): Promise<void> {

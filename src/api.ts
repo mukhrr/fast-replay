@@ -17,6 +17,13 @@ import { planSession, type SessionOutcome } from './sessions.js';
 import { resolveSessionSeed, runRepro, type RunOptions, type RunResult } from './replayer/run.js';
 import type { Repro } from './ir/schema.js';
 
+/** `WxH` as typed on a command line or in a tool call. */
+export function parseViewport(value: string): { width: number; height: number } {
+  const match = /^(\d+)x(\d+)$/.exec(value.trim());
+  if (!match) throw new Error(`Invalid viewport "${value}". Expected WxH, e.g. 1440x900.`);
+  return { width: Number(match[1]), height: Number(match[2]) };
+}
+
 export interface RecordOptions {
   name: string;
   baseUrl: string;

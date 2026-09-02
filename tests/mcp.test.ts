@@ -61,6 +61,7 @@ describe('mcp server', () => {
       'repro_delete',
       'repro_extract',
       'repro_list',
+      'repro_record',
       'repro_run',
       'repro_steps',
     ]);
@@ -205,6 +206,114 @@ describe('mcp server', () => {
     expect(text).toContain('checkout-crash');
     expect(text).toContain('Delete Sensor 2');
     expect(text).toContain('expect-bug');
+  });
+
+  it('records from a drive file in one call and reports what it saw', async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    const driveDir = path.join(root, '.repros', 'drive');
+    await mkdir(driveDir, { recursive: true });
+    await writeFile(
+      path.join(driveDir, 'nav-only.mjs'),
+      `export default {
+        async drive(page, { observe }) {
+          await page.waitForSelector('[data-testid="sensor-row-1"]');
+          await page.click('[data-testid="nav-reports"]');
+          await page.waitForSelector('[data-testid="report-title-input"]');
+          await observe('[data-testid="report-title-input"]');
+        },
+      };`,
+      'utf8',
+    );
+    await server.reset();
+    const result = await call('repro_record', {
+      name: 'nav-only',
+      url: server.baseUrl,
+      drive: '.repros/drive/nav-only.mjs',
+    });
+    expect(result.isError).toBeFalsy();
+    const text = result.content.map((c) => c.text ?? '').join('\n');
+    expect(text).toMatch(/^RECORDED nav-only — 1 step/);
+    expect(text).toContain('.repros/nav-only.json');
+    expect(text).toMatch(/Session: none/);
+    expect(text).toContain('Evidence declared: [data-testid="report-title-input"]');
+    // Nothing failed on the demo's happy path, so a fix has nothing to be checked against yet.
+    expect(text).toMatch(/expect_fixed will refuse until/);
+    expect(text).toMatch(/repro assert nav-only --fixed/);
+    expect(result.structuredContent).toMatchObject({
+      name: 'nav-only',
+      steps: 1,
+      partial: false,
+      session: null,
+      observed: { consoleErrors: [], failedRequests: [], evidence: ['[data-testid="report-title-input"]'] },
+    });
+  });
+
+  it('runs the edited drive file on the next call, not the cached one', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    await new Promise((r) => setTimeout(r, 20));
+    await writeFile(
+      path.join(root, '.repros', 'drive', 'nav-only.mjs'),
+      `export default {
+        async drive(page, { observe }) {
+          await page.waitForSelector('[data-testid="sensor-row-1"]');
+          await page.click('[data-testid="nav-reports"]');
+          await page.waitForSelector('[data-testid="report-title-input"]');
+          // A second click, not a fill: the recorder commits a fill only on
+          // change/blur or before the next action, so a recording that ends on
+          // one would drop it and this test is about re-import, not capture.
+          await page.click('[data-testid="nav-sensors"]');
+          await page.waitForSelector('[data-testid="sensor-list"]');
+          await observe('[data-testid="sensor-list"]');
+        },
+      };`,
+      'utf8',
+    );
+    await server.reset();
+    const result = await call('repro_record', {
+      name: 'nav-and-back',
+      url: server.baseUrl,
+      drive: '.repros/drive/nav-only.mjs',
+    });
+    expect(result.structuredContent?.steps).toBe(2);
+  });
+
+  it('keeps the steps a failing driver captured and says the recording stopped early', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(
+      path.join(root, '.repros', 'drive', 'breaks.mjs'),
+      `export default {
+        async drive(page) {
+          await page.waitForSelector('[data-testid="sensor-row-1"]');
+          await page.click('[data-testid="nav-reports"]');
+          await page.waitForSelector('[data-testid="report-title-input"]');
+          throw new Error('the dialog never opened');
+        },
+      };`,
+      'utf8',
+    );
+    await server.reset();
+    const result = await call('repro_record', {
+      name: 'breaks',
+      url: server.baseUrl,
+      drive: '.repros/drive/breaks.mjs',
+    });
+    expect(result.isError).toBe(true);
+    const text = result.content.map((c) => c.text ?? '').join('\n');
+    expect(text).toMatch(/^RECORDING STOPPED EARLY — breaks, 1 step kept/);
+    expect(text).toContain('the dialog never opened');
+    expect(result.structuredContent).toMatchObject({ partial: true, steps: 1 });
+  });
+
+  it('refuses a drive file that is not one, naming it', async () => {
+    const { writeFile } = await import('node:fs/promises');
+    await writeFile(path.join(root, '.repros', 'drive', 'not-a-drive.mjs'), `export default 42;`, 'utf8');
+    const result = await call('repro_record', {
+      name: 'nope',
+      url: server.baseUrl,
+      drive: '.repros/drive/not-a-drive.mjs',
+    });
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/not-a-drive\.mjs: no default export from defineDrive\(\)/);
   });
 });
 

@@ -5,12 +5,18 @@ import { z } from 'zod';
 import {
   applyExtract,
   deleteRepro,
+  describeSession,
   list,
+  loadDrive,
   openSession,
+  parseViewport,
+  PartialRecordingError,
   readRepro,
+  record,
   reproPaths,
   run,
   suggestExtractions,
+  type RecordResult,
   type WarmSession,
 } from '../api.js';
 import { loadSteps, STEPS_DIR } from '../steps.js';
@@ -310,6 +316,115 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
           invariantViolations: result.invariantViolations,
           baseUrl: result.baseUrl,
           screenshot: result.finalScreenshot,
+        },
+      };
+    },
+  );
+
+  server.registerTool(
+    'repro_record',
+    {
+      title: 'Record a bug repro from a drive file',
+      description:
+        'Record a repro by running a drive file: a module exporting defineDrive({ setup, drive }) where drive(page, { step, observe }) ' +
+        'walks to the bug with Playwright and observe() names the evidence while it is on screen. ' +
+        'Declare the sign-in step in setup so the stored project session is reused instead of signing in again. ' +
+        'Write the file at .repros/drive/<name>.mjs, call this once, then verify fixes with repro_run. ' +
+        'Returns the steps captured, the bug signature seen while recording, and whether a session was reused.',
+      inputSchema: {
+        name: z.string().describe('Name for the repro. Letters, digits, dot, dash, underscore.'),
+        url: z.string().describe('Base URL of the running app, e.g. http://localhost:3000.'),
+        drive: z.string().describe('Path to the drive file, relative to the project root or absolute.'),
+        start_path: z.string().optional().describe('Path to start at. Default /.'),
+        headed: z.boolean().optional().describe('Record in a visible browser. Default false.'),
+        viewport: z.string().optional().describe('WxH, default 1440x900.'),
+      },
+    },
+    async ({ name, url, drive, start_path, headed, viewport }) => {
+      const refuse = (message: string) => ({
+        content: [{ type: 'text' as const, text: message }],
+        isError: true,
+        structuredContent: { name, partial: false, error: message },
+      });
+
+      let driven: Awaited<ReturnType<typeof loadDrive>>;
+      try {
+        driven = await loadDrive(path.resolve(root, drive));
+      } catch (err) {
+        return refuse((err as Error).message);
+      }
+
+      const started = Date.now();
+      let result: RecordResult | null = null;
+      let partial: PartialRecordingError | null = null;
+      try {
+        result = await record({
+          name,
+          baseUrl: url,
+          root,
+          startPath: start_path ?? '/',
+          viewport: parseViewport(viewport ?? '1440x900'),
+          headless: !headed,
+          drive: driven.drive,
+          setup: driven.setup,
+          browser: await pool.acquire(!headed),
+        });
+      } catch (err) {
+        if (!(err instanceof PartialRecordingError)) return refuse((err as Error).message);
+        partial = err;
+      }
+
+      const repro = result?.repro ?? partial!.repro;
+      const irPath = path.relative(root, result?.irPath ?? partial!.irPath);
+      const seconds = ((Date.now() - started) / 1000).toFixed(2);
+      const observed = repro.assertion.observedAtRecord;
+      const consoleErrors = observed?.consoleErrors ?? [];
+      const failedRequests = observed?.failedRequests ?? [];
+      const evidence = [
+        ...(repro.assertion.finalState.domAppeared ?? []),
+        ...(repro.assertion.finalState.domGone ?? []).map((s) => `${s} (absent)`),
+      ];
+      const stepWord = repro.steps.length === 1 ? 'step' : 'steps';
+
+      const lines = partial
+        ? [
+            `RECORDING STOPPED EARLY — ${name}, ${repro.steps.length} ${stepWord} kept after ${seconds}s`,
+            `Driver error: ${partial.cause.message}`,
+            `IR: ${irPath}`,
+            'The steps up to the failure are on disk. Fix the drive file and record again under this name, or repro_delete it.',
+          ]
+        : [
+            `RECORDED ${name} — ${repro.steps.length} ${stepWord} in ${seconds}s (stopped: ${result!.stopReason})`,
+            `IR: ${irPath}`,
+            `Session: ${describeSession(result!.session)}`,
+          ];
+      for (const warning of result?.warnings ?? []) lines.push(`Note: ${warning}`);
+      if (evidence.length) lines.push(`Evidence declared: ${evidence.join(', ')}`);
+      if (consoleErrors.length || failedRequests.length) {
+        lines.push('The bug, as observed while recording:');
+        for (const e of consoleErrors) lines.push(`  console: ${e}`);
+        for (const r of failedRequests) lines.push(`  network: ${r.method} ${r.urlPattern} -> ${r.status ?? 'aborted'}`);
+      } else if (!partial) {
+        lines.push(
+          'No bug signature was observed (no console errors, no failed requests), so repro_run with ' +
+            `expect_fixed will refuse until a criterion is named: repro assert ${name} --fixed --appeared <selector>.`,
+        );
+      }
+      if (!partial) lines.push('Next: fix the code, then repro_run with expect_fixed=true after every change.');
+
+      return {
+        content: [{ type: 'text' as const, text: lines.join('\n') }],
+        isError: Boolean(partial),
+        structuredContent: {
+          name,
+          irPath,
+          steps: repro.steps.length,
+          stopReason: result?.stopReason ?? 'drive-failed',
+          observed: { consoleErrors, failedRequests, evidence },
+          session: result?.session ? { status: result.session.status, step: result.session.step } : null,
+          warnings: result?.warnings ?? [],
+          partial: Boolean(partial),
+          error: partial?.cause.message ?? null,
         },
       };
     },

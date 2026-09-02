@@ -18,6 +18,8 @@ export interface CompileOptions {
   observed?: { selector: string; absent: boolean }[];
   /** Shared setup the driver invoked, recorded by reference. */
   setup?: { step: string; params?: Record<string, string> }[];
+  /** Present only when record time proved the session probe on this start path. */
+  sessionCheck?: { step: string };
   createdAt?: string;
   waitRules?: WaitRules;
 }
@@ -234,6 +236,7 @@ export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
     viewport: trace.viewport,
     storageStatePath: options.storageStatePath,
     setup: options.setup ?? [],
+    ...(options.sessionCheck ? { sessionCheck: options.sessionCheck } : {}),
     steps,
     assertion: deriveAssertion(steps, trace, options.observed),
   };

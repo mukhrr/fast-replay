@@ -348,3 +348,30 @@ describe('schema', () => {
     expect(repro.assertion.mode).toBe('expect-bug');
   });
 });
+
+describe('sessionCheck', () => {
+  const base = {
+    version: 1,
+    name: 'x',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    baseUrl: BASE,
+    viewport: { width: 1, height: 1 },
+    steps: [],
+    assertion: { finalState: {}, invariants: {} },
+  };
+
+  it('is optional, so a repro from an earlier release still parses', () => {
+    expect(parseRepro(base, 'x.json').sessionCheck).toBeUndefined();
+    expect(parseRepro({ ...base, sessionCheck: { step: 'signed-in' } }, 'x.json').sessionCheck).toEqual({
+      step: 'signed-in',
+    });
+  });
+
+  it('is written by compile only when given', () => {
+    const t = trace();
+    expect(compile(t, { name: 'x', storageStatePath: null }).sessionCheck).toBeUndefined();
+    expect(
+      compile(t, { name: 'x', storageStatePath: null, sessionCheck: { step: 's' } }).sessionCheck,
+    ).toEqual({ step: 's' });
+  });
+});

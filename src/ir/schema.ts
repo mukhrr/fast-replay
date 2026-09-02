@@ -205,6 +205,17 @@ export const ReproSchema = z.object({
       }),
     )
     .default([]),
+  /**
+   * Verify this step's `ensures` on the start path before trusting the
+   * restored session, and re-run the step once if it is not visible.
+   *
+   * Written only when record time proved the check works for this repro: the
+   * selector was visible on the start path right after a real sign-in. A probe
+   * on a path where it is never visible would time out and sign in on every
+   * replay, which is the failure a shared session exists to remove. Absent
+   * means restore and skip, as before.
+   */
+  sessionCheck: z.object({ step: z.string().min(1) }).optional(),
   steps: z.array(StepSchema),
   assertion: AssertionSchema,
 });

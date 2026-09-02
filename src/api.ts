@@ -249,6 +249,7 @@ export async function list(root = process.cwd()): Promise<ReproSummary[]> {
 export { assertRepro, fixRepro, type AssertOptions, type FixOptions } from './ir/edit.js';
 export {
   applyExtract,
+  extractionNudge,
   renderStepModule,
   suggestExtractions,
   type ApplyExtractOptions,

@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { z } from 'zod';
 import { isDurableSelector } from './compiler/compile.js';
+import { loadConfig } from './config.js';
 import {
   applyExtraction,
   findCommonPrefixes,
@@ -262,4 +263,24 @@ export function renderStepModule(def: RenderStepOptions, fragment: Step[]): stri
     `  },\n` +
     `});\n`
   );
+}
+
+/**
+ * One line per prefix shared by at least `extractThreshold` repros.
+ *
+ * The threshold is the project's, so a team decides once how much repetition
+ * is worth a shared step. Only exact matches count: a near match still needs
+ * a hand to parameterize it, and nudging toward a rewrite that will be
+ * refused helps nobody. Nothing here writes.
+ */
+export async function extractionNudge(root = process.cwd()): Promise<string[]> {
+  const { extractThreshold } = await loadConfig(root);
+  const { suggestions } = await suggestExtractions({ root, minRepros: extractThreshold });
+  return suggestions
+    .filter((s) => s.repros.length >= extractThreshold)
+    .map(
+      (s) =>
+        `${s.repros.length} repros share a ${s.stepCount}-step prefix starting at ${s.startPath} — ` +
+        'repro extract to make it a shared step',
+    );
 }

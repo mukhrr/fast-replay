@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createReplayServer, record } from '../src/api.js';
+import { createReplayServer, extractionNudge, record } from '../src/api.js';
 import { startDemoServer, type DemoServer } from './helpers/demo-server.js';
 import { demoBugFlow } from './helpers/flow.js';
 
@@ -391,5 +391,62 @@ describe('warm sessions by default', () => {
     } finally {
       await writeFile(irPath, backup);
     }
+  });
+});
+
+describe('the extraction nudge', () => {
+  let nudgeRoot: string;
+  let nudgeClient: Client;
+  let nudgeReplay: ReturnType<typeof createReplayServer>;
+
+  const nudgeCall = (name: string, args: Record<string, unknown> = {}) =>
+    nudgeClient.callTool({ name, arguments: args }) as Promise<ToolResult>;
+
+  beforeAll(async () => {
+    const { mkdir, writeFile } = await import('node:fs/promises');
+    nudgeRoot = await mkdtemp(path.join(tmpdir(), 'replay-nudge-'));
+    // The default threshold is 4; two repros are enough to prove the mechanism.
+    await mkdir(path.join(nudgeRoot, '.repros'), { recursive: true });
+    await writeFile(path.join(nudgeRoot, '.repros', 'config.json'), '{ "extractThreshold": 2 }', 'utf8');
+    for (const name of ['first-issue', 'second-issue']) {
+      await server.reset();
+      await record({ name, baseUrl: server.baseUrl, root: nudgeRoot, headless: true, drive: demoBugFlow });
+    }
+    const [c, s] = InMemoryTransport.createLinkedPair();
+    nudgeClient = new Client({ name: 'test-agent', version: '1.0.0' });
+    nudgeReplay = createReplayServer(nudgeRoot);
+    await Promise.all([nudgeReplay.server.connect(s), nudgeClient.connect(c)]);
+  }, 120_000);
+
+  afterAll(async () => {
+    await nudgeReplay?.dispose();
+    await nudgeClient?.close();
+    if (nudgeRoot) await rm(nudgeRoot, { recursive: true, force: true });
+  });
+
+  it('appears in repro_list once the configured number of repros share a prefix', async () => {
+    const lines = await extractionNudge(nudgeRoot);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^2 repros share a \d+-step prefix starting at \/ — repro extract/);
+
+    const listed = await nudgeCall('repro_list');
+    expect(listed.content.map((c) => c.text ?? '').join('\n')).toContain(lines[0]);
+  });
+
+  it('never appears in repro_run, which stays about the bug', async () => {
+    await server.reset();
+    const ran = await nudgeCall('repro_run', { name: 'first-issue', reuse: false });
+    expect(ran.content.map((c) => c.text ?? '').join('\n')).not.toMatch(/repros share/);
+  });
+
+  it('disappears once the prefix has been extracted', async () => {
+    // Both repros are the same recording, so the shared prefix is the whole
+    // flow and extraction refuses to leave a repro with nothing but setup.
+    // Taking nine of the ten steps is the --length a caller would choose.
+    const applied = await nudgeCall('repro_extract', { name: 'demo-preamble', length: 9 });
+    expect(applied.isError).toBeFalsy();
+    expect(await extractionNudge(nudgeRoot)).toEqual([]);
+    const listed = await nudgeCall('repro_list');
+    expect(listed.content.map((c) => c.text ?? '').join('\n')).not.toMatch(/repros share/);
   });
 });

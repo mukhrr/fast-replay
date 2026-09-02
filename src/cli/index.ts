@@ -6,6 +6,7 @@ import {
   assertRepro,
   deleteRepro,
   describeSession,
+  extractionNudge,
   fixRepro,
   list,
   loadDrive,
@@ -82,6 +83,7 @@ program
     console.log(`  ${dim('→')} ${path.relative(process.cwd(), irPath)}`);
     if (repro.setup.length) console.log(`  ${dim('session')} ${describeSession(session)}`);
     for (const warning of warnings) console.log(`  ${yellow('!')} ${warning}`);
+    for (const line of await extractionNudge()) console.log(`  ${dim('→')} ${line}`);
 
     const { invariants, observedAtRecord } = repro.assertion;
     if (!invariants.noConsoleErrors || !invariants.noFailedRequests) {
@@ -319,6 +321,7 @@ program
       }),
     ];
     console.log(table(rows));
+    for (const line of await extractionNudge()) console.log(dim(`  ${line}`));
   });
 
 const collect = (value: string, previous: string[] = []): string[] => [...previous, value];

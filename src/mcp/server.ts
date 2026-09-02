@@ -6,6 +6,7 @@ import {
   applyExtract,
   deleteRepro,
   describeSession,
+  extractionNudge,
   list,
   loadDrive,
   openSession,
@@ -410,6 +411,7 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
             `expect_fixed will refuse until a criterion is named: repro assert ${name} --fixed --appeared <selector>.`,
         );
       }
+      if (!partial) for (const line of await extractionNudge(root)) lines.push(line);
       if (!partial) lines.push('Next: fix the code, then repro_run with expect_fixed=true after every change.');
 
       return {
@@ -638,9 +640,10 @@ export function createReplayServer(root = process.cwd()): ReplayServer {
         return `${r.name} — ${r.steps ?? '?'} steps, last run: ${last}${r.error ? ` (INVALID: ${r.error})` : ''}`;
       });
 
+      const nudges = await extractionNudge(root);
       return {
-        content: [{ type: 'text', text: lines.join('\n') }],
-        structuredContent: { repros },
+        content: [{ type: 'text', text: [...lines, ...nudges].join('\n') }],
+        structuredContent: { repros, nudges },
       };
     },
   );

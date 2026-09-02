@@ -274,8 +274,19 @@ export function renderStepModule(def: RenderStepOptions, fragment: Step[]): stri
  * refused helps nobody. Nothing here writes.
  */
 export async function extractionNudge(root = process.cwd()): Promise<string[]> {
-  const { extractThreshold } = await loadConfig(root);
-  const { suggestions } = await suggestExtractions({ root, minRepros: extractThreshold });
+  let extractThreshold: number;
+  let suggestions: ExtractSuggestion[];
+  try {
+    ({ extractThreshold } = await loadConfig(root));
+    ({ suggestions } = await suggestExtractions({ root, minRepros: extractThreshold }));
+  } catch (err) {
+    // A nudge is auxiliary output. A broken config must not turn a finished
+    // recording or listing into a failure, and must not vanish either.
+    // loadConfig puts the offending field on its own line (e.g. "Invalid
+    // .repros/config.json\n  extractThreshold: ..."); collapsing newlines
+    // keeps the nudge one line without dropping which field is wrong.
+    return [`Could not check for repeated prefixes: ${(err as Error).message.replace(/\n/g, '; ')}`];
+  }
   return suggestions
     .filter((s) => s.repros.length >= extractThreshold)
     .map(

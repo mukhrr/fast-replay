@@ -449,4 +449,20 @@ describe('the extraction nudge', () => {
     const listed = await nudgeCall('repro_list');
     expect(listed.content.map((c) => c.text ?? '').join('\n')).not.toMatch(/repros share/);
   });
+
+  it('reports a broken config as one line instead of failing the listing', async () => {
+    const { readFile, writeFile } = await import('node:fs/promises');
+    const configFile = path.join(nudgeRoot, '.repros', 'config.json');
+    const original = await readFile(configFile, 'utf8');
+    await writeFile(configFile, '{ "extractThreshold": 1 }', 'utf8');
+    try {
+      const listed = await nudgeCall('repro_list');
+      expect(listed.isError).toBeFalsy();
+      const text = listed.content.map((c) => c.text ?? '').join('\n');
+      expect(text).toContain('first-issue');
+      expect(text).toMatch(/Could not check for repeated prefixes: .*extractThreshold/);
+    } finally {
+      await writeFile(configFile, original, 'utf8');
+    }
+  });
 });

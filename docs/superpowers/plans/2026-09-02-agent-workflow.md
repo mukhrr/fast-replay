@@ -491,6 +491,7 @@ In `tests/steps.test.ts`, replace the `session` step body:
        description: 'Establishes a session (counts its runs on globalThis)',
        establishesSession: true,
        ensures: '[data-testid="signed-in-badge"]',
+       ensuresTimeoutMs: 3000,
        async run(page) {
          globalThis.__sessionRuns = (globalThis.__sessionRuns ?? 0) + 1;
          await page.evaluate(() => localStorage.setItem('replay-token', 'ok'));
@@ -1071,6 +1072,9 @@ beforeAll(async () => {
        description: 'Signed in as the seed account',
        establishesSession: true,
        ensures: '[data-testid="signed-in-badge"]',
+       // The badge renders with the page, so a probe that has not seen it in
+       // three seconds is looking at a dead session, not a slow one.
+       ensuresTimeoutMs: 3000,
        async run(page) {
          globalThis.__signIns = (globalThis.__signIns ?? 0) + 1;
          if (globalThis.__signInBroken) throw new Error('login form is gone');
@@ -1461,16 +1465,20 @@ Replace everything from `const observed: { selector: string; absent: boolean }[]
         .map((n) => steps.get(n))
         .filter((s): s is LoadedStep => Boolean(s?.establishesSession));
       if (!sessionSteps.length) return;
-      sessionStorageState = await captureStorageState(context);
+      const state = await captureStorageState(context);
+      sessionStorageState = state;
 
       // A session step invoked from drive() rather than declared still leaves
       // a shared session behind, under the same eligibility rules as a
       // declared one, so the next recording can declare it and skip the
-      // sign-in this one paid. Proof is claimed only if the page happens to
-      // be on the start path right now; navigating away would disrupt the
-      // driver mid-flow.
+      // sign-in this one paid. Only when the declared setup had no session
+      // step at all: a plan that shared or refused already decided. Proof is
+      // claimed only if the page happens to be on the start path right now;
+      // navigating away would disrupt the driver mid-flow.
       const only = sessionSteps[0];
       if (
+        plan?.target ||
+        plan?.disabled ||
         sessionOutcome ||
         sessionSteps.length > 1 ||
         !only?.ensures ||
@@ -1484,7 +1492,7 @@ Replace everything from `const observed: { selector: string; absent: boolean }[]
       const files = sessionFiles(root, key, host);
       const onStartPath = pathOf(page.url(), options.baseUrl) === startPath;
       const proven = onStartPath && (await ensuresVisible(page, only));
-      await persistSession(files, sessionStorageState, { path: startPath, proven });
+      await persistSession(files, state, { path: startPath, proven });
       sessionOutcome = { step: only.name, key, host, status: 'established', proven, statePath: files.state };
     };
 

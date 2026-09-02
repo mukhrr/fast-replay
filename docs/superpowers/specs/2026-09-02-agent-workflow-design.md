@@ -76,69 +76,85 @@ A session belongs to the project and the account, not to the repro. A step marke
 
 ```
 .repros/sessions/signed-in@localhost:3000.json
+.repros/sessions/signed-in@localhost:3000.meta.json
 .repros/sessions/signed-in@staging.example.com.json
 .repros/sessions/new-account.a91f3c@staging.example.com.json
 ```
 
-Module: `src/sessions.ts` exporting `sessionKey(step, params)`, `sessionFile(root, key, host)`, `readSession`, `writeSession`, and the shared `establishSession` routine below.
+The `.json` file is a raw Playwright storage state, so it still works with `--storage-state` by hand. The `.meta.json` sidecar records what the tool has learned about it:
+
+```json
+{ "mintedAt": "2026-09-02T09:14:00Z", "provenPaths": ["/", "/workspaces"] }
+```
+
+`provenPaths` lists the start paths on which the step's `ensures` selector was seen visible right after a real sign-in. It is the only evidence that probing this session on that path is meaningful, and nothing below probes without it.
+
+Module: `src/sessions.ts` exporting `sessionKey(step, params)`, `sessionFiles(root, key, host)`, `readSession`, `writeSession`, `readMeta`, `writeMeta`, and the shared `establishSession` routine below.
 
 ### Record time
 
 A recording declares its session step up front, because Playwright seeds a session only when a context is created. `RecordOptions` gains `setup?: { step: string; params?: Record<string, string> }[]`; the drive file (section 3) declares the same. The recorder resolves the `requires` closure of the declared steps and finds the session steps.
 
-Exactly one session step in the closure:
+Exactly one session step in the closure. The decision is made from the session file, its sidecar and the recording's start path, before the browser opens:
 
-1. If a session file for its key and the recording host exists and has content, open the context seeded from it, load the start path, wait for the step's `ensures` selector with the step's `ensuresTimeoutMs` (default 30 s). Present means fresh: the step is marked as run, no sign-in happens.
-2. If the file is missing, empty, or the selector never appears, run the step for real through `runStep`, capture the session with IndexedDB, write the file atomically.
-3. Declared non-session steps in `setup` run after this, through `runStep`, with the same `ran` set, before `drive` is called.
-4. The repro's `storageStatePath` points at the shared session file, project relative. No per repro `state.json` is written for such a repro.
+1. **Proven path, session present.** The session file has content and `provenPaths` contains the start path. Open the context seeded from it, load the start path, wait for the step's `ensures` selector with the step's `ensuresTimeoutMs` (default 30 s). Visible means fresh: the step is marked as run, no sign-in happens. Not visible means expired: run the step for real through `runStep`, capture the session with IndexedDB, rewrite the file and refresh `mintedAt`.
+2. **Unproven path, or no session.** Open a fresh context and run the step for real. No probe is attempted, because a probe on a path where `ensures` has never been seen would wait the full timeout and then sign in anyway. Capture and write the session file.
+3. **Proof.** After any real sign-in, navigate to the start path and check `ensures` once. Visible: the start path is added to `provenPaths`, and the repro is marked probeable. Not visible: a warning names the step, the selector and the path, and says this repro will restore the session without checking it. Nothing else changes.
+4. Declared non-session steps in `setup` run next, through `runStep`, with the same `ran` set, before `drive` is called.
+5. The repro's `storageStatePath` points at the shared session file, project relative. No per repro `state.json` is written for such a repro.
+
+The probeable marker is a new optional top-level IR field, hand editable and backward readable, so `IR_VERSION` stays at 1:
+
+```json
+"sessionCheck": { "step": "signed-in" }
+```
+
+It means: before trusting the restored session, verify this step's `ensures` on the start path. It is written only when record time proved the check works for this repro, and a user can add it by hand once a step's `ensures` names something global. Its absence is the instruction to behave as today.
 
 No session step in the closure: behaviour is unchanged. The pre drive snapshot goes to the per repro `state.json`.
 
 An explicit `--storage-state` or `--profile` on the recording wins over a declared session: reuse is disabled for that recording, the session step runs as today, and the recorder prints a note saying which option disabled reuse. Two ways of seeding one context cannot both apply.
 
-Two or more session steps in the closure: reuse is disabled for the recording, every step runs, the per repro `state.json` receives the final snapshot, and the recorder prints a note saying a single seeded state cannot represent two accounts.
+Two or more session steps in the closure: reuse is disabled for the recording, every step runs, the per repro `state.json` receives the final snapshot, no `sessionCheck` is written, and the recorder prints a note saying a single seeded state cannot represent two accounts.
 
-`api.step()` inside `drive` keeps working. Calling a session step there rather than declaring it runs the step for real, captures, writes the shared file for its key and host, and points the repro at it. This recording paid the sign-in; the next one that declares the step does not.
+`api.step()` inside `drive` keeps working. Calling a session step there rather than declaring it runs the step for real, captures, writes the shared file for its key and host, records proof for the start path if `ensures` is visible there at that moment, and points the repro at the shared file. This recording paid the sign-in; the next one that declares the step does not.
 
 The recorded IR lists every setup step in `setup[]`, declared or invoked, in execution order, with the explicit params passed. This is what replay uses to recompute the key.
 
 ### Replay time
 
-`runRepro` seeds the context from the repro's `storageStatePath` as today. After the start page loads, for the session step in the closure (found through `transitiveRequires` of `repro.setup`, params taken from the matching `setup[]` entry):
+`runRepro` seeds the context from the repro's `storageStatePath` as today and marks session steps as run when a session was restored, exactly as now. The new behaviour applies only to a repro carrying `sessionCheck`, after the start page loads:
 
-1. Wait for the step's `ensures` selector with the step's timeout. Present: the session is alive, the step stays skipped, zero sign-ins.
-2. Absent: the session has expired. Run the step once through `runStep`, capture the session, write it to the session file for the key and the host replay is running against, navigate back to the start path, and push the note `session re-established via step "<name>" (stored session had expired)` onto `result.notes`. Replay continues.
+1. Wait for the named step's `ensures` selector with the step's timeout. Visible: the session is alive, the step stays skipped, zero sign-ins.
+2. Not visible: the session has expired. Run the step once through `runStep`, capture the session, write it to the session file for the key and the host replay is running against, refresh `mintedAt`, navigate back to the start path, and push the note `session re-established via step "<name>" (stored session had expired)` onto `result.notes`. Replay continues.
 3. If the step throws during re-establishment, the run fails as `kind: 'infrastructure'`, `COULD NOT VERIFY`, naming the step and its file, as setup failures do today.
+
+A repro without `sessionCheck` takes today's path by construction: restore, skip, no probe, no heal. That covers every repro recorded before this change and every repro whose record time could not prove the check.
 
 Both record and replay call one routine, `establishSession`, so the probe and the heal cannot diverge.
 
-With two or more session steps in the closure, replay skips the probe and behaves exactly as today, matching the record side where reuse was disabled.
+Under `--profile`, the profile holds the session. The probe and heal still run for a repro with `sessionCheck`, so an expired login in the profile is re-established and noted, but nothing is written to `.repros/sessions/`.
 
-Under `--profile`, the profile holds the session. The probe and heal still run, so an expired login in the profile is re-established and noted, but nothing is written to `.repros/sessions/`.
-
-Under `--env`, `resolveSessionSeed` first looks for the target host's own session file for the same key. Present with content, it is seeded directly with no retargeting. Missing, it falls back to retargeting the recorded host's file in memory as today. A heal under `--env` writes the recaptured session to the target host's file and never touches the recorded host's file, so the second `--env` replay starts warm.
+Under `--env`, `resolveSessionSeed` first looks for the target host's own session file for the same key. Present with content, it is seeded directly with no retargeting. Missing, it falls back to retargeting the recorded host's file in memory as today. A heal under `--env` writes the recaptured session and its sidecar to the target host's files and never touches the recorded host's files, so the second `--env` replay starts warm.
 
 Warm sessions in the MCP server are seeded through `openSession`, which uses `resolveSessionSeed`, so they receive the same probe and heal inside the warm context.
 
 ### Contract on `ensures`
 
-For a session step, `ensures` doubles as the freshness check, so it must name something visible on every signed-in page: an account menu or avatar rather than a home screen element. Enforced two ways:
+For a session step, `ensures` doubles as the freshness check, so it should name something visible on every signed-in page: an account menu or avatar rather than a home screen element. A page specific selector is not an error. It only means fewer start paths get proven, so fewer repros carry `sessionCheck` and more recordings pay a real sign-in. The rule is stated in the README and in the `StepDefinition` comment, and the record time warning in step 3 above says exactly which path failed to prove.
 
-- Documentation in the README and in the `StepDefinition` comment.
-- A warning at record time when, after a real sign-in, the step's `ensures` is not visible once the page is back on the start path. The recording still succeeds.
-
-A session step with no `ensures` cannot be probed. It behaves exactly as today: runs at record, skipped on replay when a session was restored, no reuse across repros. `repro steps`, `repro_steps` and the record output say why it is not reused.
+A session step with no `ensures` cannot be probed or proven. It behaves exactly as today: runs at record, skipped on replay when a session was restored, no reuse across repros. `repro steps`, `repro_steps` and the record output say why it is not reused.
 
 ### Safety rules
 
 - A session file with no cookies and no origins is not a session. The existing `storageStateHasContent` guard applies to project session files.
+- Nothing probes without proof. Record time probes only on a path in `provenPaths`; replay probes only a repro carrying `sessionCheck`. A probe that cannot be trusted would sign in on every run, which is the failure this design exists to remove.
 - A heal is never silent. The note is always present in the result, and the MCP `repro_run` output prints notes already.
-- A heal happens at most once per run. If the probe fails again after re-establishment, the run is `COULD NOT VERIFY` naming the step.
+- A heal happens at most once per run. If `ensures` is still not visible after re-establishment, the run is `COULD NOT VERIFY` naming the step.
 
 ### Compatibility
 
-No IR version bump. Old repros have a per repro `state.json` and either no session step or one without the shared file, so they take the unchanged path. `repro rm` does not delete session files, which live outside the repro's sidecar directory.
+No IR version bump. `sessionCheck` is optional. Old repros lack it, have a per repro `state.json`, and take the unchanged path by construction. `repro rm` does not delete session files, which live outside the repro's sidecar directory.
 
 ## 3. Agent recording
 
@@ -160,6 +176,8 @@ export default defineDrive({
 `defineDrive` is an identity function for typing, like `defineStep`, exported from `src/api.ts` and defined in `src/drive.ts` beside `loadDrive(file)`. `setup` is the declared preamble from section 2. `drive` receives the same `page` and `DriveApi` the programmatic path already does.
 
 `loadDrive` imports the module by file URL and refuses, naming the file, when the default export lacks a `drive` function, using the same wording `loadSteps` uses for a bad step file.
+
+Node caches an ES module by URL for the life of the process. The MCP server is long lived, and the expected loop is a partial recording, an edit to the drive file, and a second `repro_record`, which would otherwise run the first version. `loadDrive` appends the file's mtime as a query string to the import URL, so an edited file is a new module. `loadSteps` gets the same treatment, since "fix the step once" also runs through the live server and today a step edited while the server runs is not picked up until restart.
 
 ### CLI
 
@@ -226,6 +244,7 @@ Source: `suggestExtractions({ minRepros: config.extractThreshold })`, exact matc
 ### Fixture
 
 The demo app has no login. `examples/demo-app/src/App.tsx` gains one element, test id `signed-in-badge`, rendered only when `localStorage.getItem('replay-token') === 'ok'`. A session file whose token is `stale` simulates expiry. The existing `session` step in `tests/steps.test.ts` changes its `ensures` to `[data-testid="signed-in-badge"]`.
+The badge is rendered on every route of the demo app, so the session step's `ensures` is global and every start path proves.
 
 ### Tests
 
@@ -242,11 +261,16 @@ Sessions (`tests/sessions.test.ts`, extending the fixtures in `tests/steps.test.
 - a session step without `ensures` is not reused and the record output says why;
 - two session steps in one closure disable reuse with a note;
 - `api.step()` on a session step writes the shared file and points the repro at it.
+- a step whose `ensures` is not visible on the start path produces a warning, no `sessionCheck`, and a repro that restores without probing and never heals;
+- `sessionCheck` added by hand to such a repro turns the probe on;
+- a recording on an unproven path signs in for real without waiting on a probe, and proves the path for the next recording;
+- a repro recorded by the previous release, with a per repro `state.json` and no `sessionCheck`, replays unchanged.
 
 Recording (`tests/drive.test.ts`, `tests/mcp.test.ts`):
 - `repro record --drive` and `repro_record` produce the same IR as a programmatic `record` of the same flow, timing fields aside;
 - a partial recording reports surviving steps and the error;
 - a file without `defineDrive` is refused by name;
+- editing a drive file between two `repro_record` calls in one server process runs the edited version; the same for a step file between two `repro_run` calls;
 - the result carries observed evidence and the session status.
 
 Awareness (`tests/mcp.test.ts`, `tests/extract.test.ts`):

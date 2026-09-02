@@ -212,10 +212,12 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
     const startUrl = new URL(repro.startPath, baseUrl).toString();
     await page.goto(startUrl, { waitUntil: 'domcontentloaded' });
 
-    // Where the bug flow starts. A heal signs in mid-run, and a sign-in that
-    // fails a same-origin request is already in the recorded signature because
-    // the recording signed in too, so counting it toward the verdict would
-    // report the bug present on a fixed app, but only on the runs that healed.
+    // The setup interval, probe and heal included, is not the bug flow: a
+    // sign-in that fails a same-origin request is in the recorded signature
+    // because the recording signed in too, so a healed run would otherwise
+    // report the bug present on a fixed app. Only this interval is cut from the
+    // verdict, so what the page did while booting counts exactly as it did.
+    const setupStartedAt = Date.now();
     let setupDoneAt = startedAt;
 
     // Setup runs as code, not as replayed clicks, so a fix to a shared step
@@ -565,9 +567,10 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
       }
     }
 
-    // Everything the bug flow itself produced, setup excluded. See setupDoneAt.
-    const bugNetwork = reactions.network.filter((n) => n.startedAt >= setupDoneAt);
-    const bugConsole = reactions.console.filter((c) => c.t >= setupDoneAt);
+    // Everything the bug flow itself produced. See setupStartedAt.
+    const outsideSetup = (t: number): boolean => t < setupStartedAt || t >= setupDoneAt;
+    const bugNetwork = reactions.network.filter((n) => outsideSetup(n.startedAt));
+    const bugConsole = reactions.console.filter((c) => outsideSetup(c.t));
 
     // Bug-recurrence is a fallback signal, used only when the author has not
     // said what "fixed" means. Console errors are a poor signature on a real

@@ -9,6 +9,7 @@ import {
   describeSession,
   extractionNudge,
   fixRepro,
+  GITIGNORE_BLOCK,
   initProject,
   list,
   loadDrive,
@@ -42,7 +43,12 @@ program
   .command('init')
   .description('set up .repros/ once per project: ignore rules, config, steps dir, and what to tell your agent')
   .action(async () => {
-    const { changes } = await initProject();
+    const { changes, gitignoreConflict } = await initProject();
+    if (gitignoreConflict) {
+      console.log(yellow('  .gitignore needs this block in place of its .repros/ line:'));
+      for (const line of GITIGNORE_BLOCK) console.log(`  ${dim(line)}`);
+      console.log('');
+    }
     for (const change of changes) console.log(`  ${green('✓')} ${change}`);
     console.log('');
     console.log(bold('Add to your MCP client config:'));

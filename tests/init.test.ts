@@ -54,6 +54,27 @@ describe('repro init', () => {
     expect(ignore).toContain(`\n${GITIGNORE_BLOCK.join('\n')}\n`);
   });
 
+  it('refuses to append below a .gitignore that ignores .repros/ as a whole', async () => {
+    const file = path.join(root, '.gitignore');
+    const before = 'node_modules/\n.repros/\n';
+    await writeFile(file, before, 'utf8');
+    const { changes, gitignoreConflict } = await initProject(root);
+    expect(await readFile(file, 'utf8')).toBe(before);
+    expect(gitignoreConflict).toEqual({ line: 2 });
+    expect(changes.join('\n')).toMatch(/\.gitignore line 2 ignores \.repros\/ as a whole/);
+  });
+
+  it('recognises every spelling of the whole-directory ignore, and ignores comments', async () => {
+    const file = path.join(root, '.gitignore');
+    for (const rule of ['.repros/', '.repros', '/.repros/', '/.repros']) {
+      const before = `# .repros/\ndist\n  ${rule}  \n`;
+      await writeFile(file, before, 'utf8');
+      const { gitignoreConflict } = await initProject(root);
+      expect(gitignoreConflict, rule).toEqual({ line: 3 });
+      expect(await readFile(file, 'utf8')).toBe(before);
+    }
+  });
+
   it('carries the workflow an agent needs, and the same text the server sends', () => {
     for (const tool of ['repro_steps', 'repro_record', 'repro_run', 'repro_extract', 'repro_delete']) {
       expect(AGENT_WORKFLOW).toContain(tool);

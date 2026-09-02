@@ -1,7 +1,8 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
 import type { Page } from 'playwright';
+
+import { importFresh } from './import-fresh.js';
 
 /**
  * Shared setup steps.
@@ -113,9 +114,7 @@ export async function loadSteps(
     if (!/\.(m?js|ts)$/.test(entry) || entry.endsWith('.d.ts')) continue;
     const file = path.join(dir, entry);
     try {
-      const mod = (await import(pathToFileURL(path.resolve(file)).href)) as {
-        default?: StepDefinition;
-      };
+      const mod = await importFresh<{ default?: StepDefinition }>(file);
       const definition = mod.default;
       if (!definition?.name || typeof definition.run !== 'function') {
         errors.push({ file, message: 'no default export from defineStep()' });

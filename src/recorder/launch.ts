@@ -16,6 +16,7 @@ import {
   persistSession,
   sessionFiles,
   sessionKey,
+  SHARING_DISABLED_WARNING,
   type SessionOutcome,
   type SessionPlan,
 } from '../sessions.js';
@@ -238,7 +239,7 @@ export async function launchRecording(
 
     // Declared setup runs before the driver gets the page. The session step is
     // handled first so the rest of the declared steps find it already done.
-    if (plan?.disabled) warnings.push(`declared setup is not shared: ${plan.disabled}`);
+    if (plan?.disabled) warnings.push(`${SHARING_DISABLED_WARNING}: ${plan.disabled}`);
     if (plan?.target) {
       session.suspend();
       try {

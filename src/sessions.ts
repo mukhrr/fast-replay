@@ -315,12 +315,16 @@ export function canPersistHeal(o: {
   return { ok: true };
 }
 
+/** The record warning that says a declared session step is not being shared. */
+export const SHARING_DISABLED_WARNING = 'declared setup is not shared';
+
 /**
  * One line for the record output, shared by the CLI and the MCP server.
  *
- * `declared` says the recording declared setup, which separates "there was no
- * session step to share" from "there was one and sharing is off", the second of
- * which is explained by a warning printed just above this line.
+ * `declared` says a sharing warning was emitted, which separates "there was no
+ * session step to share" from "there was one and sharing is off". Deriving it
+ * from that warning rather than from the presence of setup keeps the line from
+ * pointing at a warning nobody printed.
  */
 export function describeSession(
   outcome: SessionOutcome | null,

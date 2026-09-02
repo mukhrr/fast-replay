@@ -17,6 +17,7 @@ import {
   record,
   reproPaths,
   run,
+  SHARING_DISABLED_WARNING,
   suggestExtractions,
   type RecordResult,
   type WarmSession,
@@ -408,7 +409,9 @@ export async function createReplayServer(root = process.cwd()): Promise<ReplaySe
       // Warnings before the session line, which points at them when sharing is off.
       for (const warning of result?.warnings ?? []) lines.push(`Note: ${warning}`);
       if (!partial) {
-        lines.push(`Session: ${describeSession(result!.session, { declared: repro.setup.length > 0 })}`);
+        // "see warning above" is only true when one of those Notes was a sharing warning.
+        const declared = (result?.warnings ?? []).some((w) => w.startsWith(SHARING_DISABLED_WARNING));
+        lines.push(`Session: ${describeSession(result!.session, { declared })}`);
       }
       if (evidence.length) lines.push(`Evidence declared: ${evidence.join(', ')}`);
       if (consoleErrors.length || failedRequests.length) {

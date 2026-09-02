@@ -21,6 +21,7 @@ import {
   record,
   reproPaths,
   run,
+  SHARING_DISABLED_WARNING,
   STOP_HOTKEY,
   suggestExtractions,
 } from '../api.js';
@@ -108,7 +109,8 @@ program
     // Warnings first: the session line points at them when sharing is off.
     for (const warning of warnings) console.log(`  ${yellow('!')} ${warning}`);
     if (repro.setup.length) {
-      console.log(`  ${dim('session')} ${describeSession(session, { declared: true })}`);
+      const declared = warnings.some((w) => w.startsWith(SHARING_DISABLED_WARNING));
+      console.log(`  ${dim('session')} ${describeSession(session, { declared })}`);
     }
     for (const line of await extractionNudge()) console.log(`  ${dim('→')} ${line}`);
 

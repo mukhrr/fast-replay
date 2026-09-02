@@ -249,3 +249,31 @@ export async function establishSession(o: {
   if (o.persist) await persistSession(o.target.files, state, { path: o.startPath, proven });
   return { status: o.probe ? 're-established' : 'established', proven };
 }
+
+/**
+ * What replay verifies, for a repro carrying `sessionCheck`.
+ *
+ * The key comes from the file the repro points at, so a hand-edited or
+ * retargeted path still resolves. The host is the one replay is driving, so a
+ * heal under --env writes the target host's file and leaves the recorded
+ * host's alone. A per-repro state file keeps its own path and has no sidecar.
+ */
+export function replaySessionTarget(o: {
+  repro: Repro;
+  root: string;
+  baseUrl: string;
+  steps: Map<string, LoadedStep>;
+}): SessionTarget | null {
+  const check = o.repro.sessionCheck;
+  if (!check || !o.repro.storageStatePath) return null;
+  const step = o.steps.get(check.step);
+  if (!step?.ensures) return null;
+  const params = o.repro.setup.find((s) => s.step === step.name)?.params ?? {};
+  const host = hostSlug(o.baseUrl);
+  const parsed = parseSessionPath(o.repro.storageStatePath);
+  const key = parsed?.key ?? sessionKey(step.name, params);
+  const files: SessionFiles = parsed
+    ? sessionFiles(o.root, key, host)
+    : { state: path.resolve(o.root, o.repro.storageStatePath), meta: null };
+  return { step, params, key, host, files };
+}

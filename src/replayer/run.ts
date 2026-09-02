@@ -19,6 +19,14 @@ import {
 } from './invariants.js';
 import { IdentityMismatchError, TargetResolutionError, type ResolveTimeouts } from './resolve.js';
 import { performStep, rebase } from './perform.js';
+import {
+  establishSession,
+  hostSlug,
+  parseSessionPath,
+  readSessionState,
+  replaySessionTarget,
+  sessionFiles,
+} from '../sessions.js';
 import { runStep, StepError, transitiveRequires, type LoadedStep } from '../steps.js';
 import {
   retargetRepro,
@@ -200,16 +208,15 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
     const reactions = collectReactions(context);
     reactionsRef = reactions;
 
-    await page.goto(new URL(repro.startPath, baseUrl).toString(), {
-      waitUntil: 'domcontentloaded',
-    });
+    const startUrl = new URL(repro.startPath, baseUrl).toString();
+    await page.goto(startUrl, { waitUntil: 'domcontentloaded' });
 
     // Setup runs as code, not as replayed clicks, so a fix to a shared step
     // reaches every repro that references it.
     if (repro.setup.length) {
       const steps = options.steps ?? new Map<string, LoadedStep>();
       const ran = new Set<string>();
-      const haveSession = Boolean(storageStatePath(repro, root) || options.profileDir);
+      const haveSession = Boolean(seed.storageStatePath || seed.storageState || options.profileDir);
       // A sign-in whose result is already in the restored session must not run
       // again — that is what minted a fresh server session on every
       // verification. It can hide anywhere in the chain, not just among the
@@ -224,6 +231,51 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
           steps,
         )) {
           if (steps.get(name)?.establishesSession) ran.add(name);
+        }
+      }
+      // A restored session is trusted blindly unless record time proved this
+      // step's ensures visible on this start path. Probing without that proof
+      // would time out and sign in on every replay.
+      const target = haveSession && repro.sessionCheck
+        ? replaySessionTarget({ repro, root, baseUrl, steps })
+        : null;
+      if (target) {
+        try {
+          const outcome = await establishSession({
+            page,
+            context,
+            steps,
+            ran,
+            target,
+            startUrl,
+            startPath: repro.startPath,
+            probe: true,
+            persist: !options.profileDir,
+          });
+          if (outcome.status === 're-established') {
+            if (!outcome.proven) {
+              throw new StepError(
+                target.step.name,
+                `re-established the session, but its ensures (${target.step.ensures}) is still not visible on ${repro.startPath}.\n` +
+                  `      Defined in: ${target.step.file}\n` +
+                  `      Fix the step's ensures, or remove sessionCheck from the repro.`,
+              );
+            }
+            notes.push(`session re-established via step "${target.step.name}" (stored session had expired)`);
+          }
+        } catch (err) {
+          // Setup that could not run says nothing about the bug.
+          return await fail(
+            { paths, page, repro, reactions, timings: [], startedAt, since: startedAt, expectFixed, notes, baseUrl },
+            {
+              stepId: 'setup',
+              stepIndex: 0,
+              semantic: `session step "${target.step.name}"`,
+              kind: 'infrastructure',
+              expected: 'the stored session to be valid, or the step to re-establish it',
+              observed: err instanceof StepError ? err.message : (err as Error).message,
+            },
+          );
         }
       }
       for (const entry of repro.setup) {
@@ -620,7 +672,17 @@ export function resolveSessionSeed(
   root: string,
   options: { envUrl?: string | null; profileDir?: string | null },
 ): { storageStatePath: string | null; storageState: Record<string, unknown> | null } {
-  const sessionPath = options.profileDir ? null : storageStatePath(repro, root);
+  if (options.profileDir) return { storageStatePath: null, storageState: null };
+  // A session minted against the target host is exact. Only when there is
+  // none does the recorded host's session get retargeted in memory.
+  if (options.envUrl && repro.storageStatePath) {
+    const parsed = parseSessionPath(repro.storageStatePath);
+    if (parsed) {
+      const own = sessionFiles(root, parsed.key, hostSlug(options.envUrl)).state;
+      if (readSessionState(own)) return { storageStatePath: own, storageState: null };
+    }
+  }
+  const sessionPath = storageStatePath(repro, root);
   if (!sessionPath) return { storageStatePath: null, storageState: null };
   if (!options.envUrl) return { storageStatePath: sessionPath, storageState: null };
   // A session is origin-keyed, so restoring it unchanged would authenticate

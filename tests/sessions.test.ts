@@ -295,3 +295,144 @@ describe('one sign-in per project, not per repro', () => {
     expect((await readMetaFile('signed-in')).provenPaths).toEqual(before);
   });
 });
+
+describe('replay trusts a proven session and heals it once when it dies', () => {
+  const aIr = (): string => path.join(root, '.repros/a.json');
+  const aState = (): string => path.join(root, '.repros', 'sessions', `signed-in@${HOST}.json`);
+
+  it('replays with zero sign-ins while the session is alive', async () => {
+    resetSignIns();
+    for (let i = 0; i < 3; i++) {
+      await server.reset();
+      const result = await run({ name: 'a', root });
+      expect(result.passed, JSON.stringify(result.failure)).toBe(true);
+      expect(result.notes.join('\n')).not.toMatch(/re-established/);
+    }
+    expect(signIns()).toBe(0);
+  });
+
+  it('re-establishes an expired session once, says so, and stores the new one', async () => {
+    await setToken(aState(), 'stale');
+    resetSignIns();
+    await server.reset();
+    const healed = await run({ name: 'a', root });
+    expect(healed.passed, JSON.stringify(healed.failure)).toBe(true);
+    expect(healed.notes).toContain('session re-established via step "signed-in" (stored session had expired)');
+    expect(signIns()).toBe(1);
+    expect(await readFile(aState(), 'utf8')).toContain('"ok"');
+
+    await server.reset();
+    const next = await run({ name: 'a', root });
+    expect(next.passed).toBe(true);
+    expect(signIns()).toBe(1);
+  });
+
+  it('reports COULD NOT VERIFY when the step cannot re-establish the session', async () => {
+    await setToken(aState(), 'stale');
+    g.__signInBroken = true;
+    try {
+      await server.reset();
+      const result = await run({ name: 'a', root });
+      expect(result.passed).toBe(false);
+      expect(result.failure?.kind).toBe('infrastructure');
+      expect(result.failure?.semantic).toContain('signed-in');
+      expect(result.failure?.observed).toContain('login form is gone');
+    } finally {
+      g.__signInBroken = false;
+      await setToken(aState(), 'ok');
+    }
+  });
+
+  it('never probes a repro without sessionCheck, and probes once it is added by hand', async () => {
+    const original = await readFile(aIr(), 'utf8');
+    const ir = JSON.parse(original) as Record<string, unknown>;
+    delete ir.sessionCheck;
+    await writeFile(aIr(), JSON.stringify(ir, null, 2), 'utf8');
+    await setToken(aState(), 'stale');
+    try {
+      resetSignIns();
+      await server.reset();
+      const blind = await run({ name: 'a', root });
+      // The demo app gates nothing behind the badge, so a logged-out replay
+      // still walks the flow. What matters is that nothing signed in.
+      expect(blind.passed, JSON.stringify(blind.failure)).toBe(true);
+      expect(signIns()).toBe(0);
+      expect(blind.notes.join('\n')).not.toMatch(/re-established/);
+
+      await writeFile(aIr(), original, 'utf8');
+      await server.reset();
+      const probed = await run({ name: 'a', root });
+      expect(probed.passed).toBe(true);
+      expect(signIns()).toBe(1);
+      expect(probed.notes.join('\n')).toMatch(/re-established/);
+    } finally {
+      await writeFile(aIr(), original, 'utf8');
+      await setToken(aState(), 'ok');
+    }
+  });
+
+  it('keeps a repro from an earlier release, with its own state file, working unchanged', async () => {
+    const original = await readFile(aIr(), 'utf8');
+    const ir = JSON.parse(original) as Record<string, unknown>;
+    delete ir.sessionCheck;
+    ir.storageStatePath = '.repros/a/state.json';
+    await mkdir(path.join(root, '.repros/a'), { recursive: true });
+    await writeFile(path.join(root, '.repros/a/state.json'), await readFile(aState(), 'utf8'), 'utf8');
+    await writeFile(aIr(), JSON.stringify(ir, null, 2), 'utf8');
+    try {
+      resetSignIns();
+      await server.reset();
+      const result = await run({ name: 'a', root });
+      expect(result.passed, JSON.stringify(result.failure)).toBe(true);
+      expect(signIns()).toBe(0);
+    } finally {
+      await writeFile(aIr(), original, 'utf8');
+      await rm(path.join(root, '.repros/a/state.json'), { force: true });
+    }
+  });
+
+  it('under --env, heals into the target host file and leaves the recorded one alone', async () => {
+    const other = await startDemoServer(5446);
+    const otherState = path.join(root, '.repros', 'sessions', 'signed-in@localhost_5446.json');
+    try {
+      await setToken(aState(), 'stale');
+      resetSignIns();
+      await other.reset();
+      const healed = await run({ name: 'a', root, envUrl: other.baseUrl });
+      expect(healed.passed, JSON.stringify(healed.failure)).toBe(true);
+      expect(healed.notes.join('\n')).toMatch(/re-established/);
+      expect(signIns()).toBe(1);
+      expect(await readFile(otherState, 'utf8')).toContain('"ok"');
+      expect(await readFile(aState(), 'utf8')).toContain('"stale"');
+
+      await other.reset();
+      const warm = await run({ name: 'a', root, envUrl: other.baseUrl });
+      expect(warm.passed).toBe(true);
+      expect(signIns()).toBe(1);
+    } finally {
+      await other.close();
+      await setToken(aState(), 'ok');
+    }
+  });
+
+  it('under a persistent profile, heals but writes nothing to the sessions dir', async () => {
+    const { readdir, stat } = await import('node:fs/promises');
+    const profile = await mkdtemp(path.join(tmpdir(), 'replay-profile-'));
+    const sessionsDir = path.join(root, '.repros', 'sessions');
+    const before = (await readdir(sessionsDir)).sort();
+    const mtime = (await stat(aState())).mtimeMs;
+    try {
+      resetSignIns();
+      await server.reset();
+      const result = await run({ name: 'a', root, profileDir: profile });
+      expect(result.passed, JSON.stringify(result.failure)).toBe(true);
+      // An empty profile has no session, so the probe fails and the step runs.
+      expect(signIns()).toBe(1);
+      expect(result.notes.join('\n')).toMatch(/re-established/);
+      expect((await readdir(sessionsDir)).sort()).toEqual(before);
+      expect((await stat(aState())).mtimeMs).toBe(mtime);
+    } finally {
+      await rm(profile, { recursive: true, force: true });
+    }
+  });
+});

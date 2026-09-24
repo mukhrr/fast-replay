@@ -67,4 +67,20 @@ describe('jev client', () => {
     expect(err.kind).toBe('network');
     expect(err.message).toMatch(/fetch failed/);
   });
+
+  it('refuses a 200 with non-JSON body', async () => {
+    const f = fakeFetch([new Response('not json', { status: 200 })]);
+    const err = await createJevClient('k', { fetch: f.fn, sleep: noSleep }).choice({}, 'q', { a: 'a' }).catch((e) => e);
+    expect(err).toBeInstanceOf(JevError);
+    expect(err.kind).toBe('invalid');
+    expect(err.message).toMatch(/cannot read/);
+  });
+
+  it('refuses a 200 with missing answer structure', async () => {
+    const f = fakeFetch([new Response(JSON.stringify({ answers: {} }), { status: 200 })]);
+    const err = await createJevClient('k', { fetch: f.fn, sleep: noSleep }).choice({}, 'q', { a: 'a' }).catch((e) => e);
+    expect(err).toBeInstanceOf(JevError);
+    expect(err.kind).toBe('invalid');
+    expect(err.message).toMatch(/cannot read/);
+  });
 });

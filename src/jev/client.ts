@@ -49,8 +49,17 @@ export function createJevClient(
           throw new JevError(`Jev request failed: ${(err as Error).message}`, 'network');
         }
         if (res.ok) {
-          const json = (await res.json()) as { answers: { next: ChoiceAnswer } };
-          return json.answers.next;
+          let json: unknown;
+          try {
+            json = await res.json();
+          } catch (err) {
+            throw new JevError(`Jev returned a response fast-replay cannot read: ${(err as Error).message}`, 'invalid');
+          }
+          const typed = json as Record<string, Record<string, Record<string, unknown>>>;
+          if (typeof typed?.answers?.next?.choice !== 'string') {
+            throw new JevError('Jev returned a response fast-replay cannot read.', 'invalid');
+          }
+          return typed.answers.next as unknown as ChoiceAnswer;
         }
         if (res.status === 401 || res.status === 403) {
           throw new JevError('Jev rejected the API key. Run repro jev login with a valid key.', 'auth');

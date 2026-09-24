@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { chromium } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GoalNotReached, record, reproPaths, run } from '../src/api.js';
 import type { ChoiceAnswer, JevClient } from '../src/jev/client.js';
@@ -86,6 +87,38 @@ describe('goal-driven recording', () => {
     expect(err.reason).toBe('max-steps');
     expect(err.path).toEqual(['click button "Reports"', 'click button "Sensors"']);
     expect(existsSync(reproPaths('jev-limit', root).ir)).toBe(false);
+  });
+
+  it('saves nothing when the recording stops before the goal is reached for a reason other than the driver finishing', async () => {
+    // The scripted answer closes the whole browser before responding, so the
+    // context's own 'close' listener stops the session with 'browser-closed'
+    // while the driver is still mid-choice — driveError never gets set.
+    const browser = await chromium.launch({ headless: true });
+    const jev: JevClient = {
+      async choice(_state, _instructions, criteria) {
+        await browser.close();
+        const key = Object.keys(criteria)[0]!;
+        return { choice: key, confidence: 0.9, probabilities: { [key]: 0.9 } };
+      },
+    };
+    try {
+      const err = await record({
+        name: 'jev-closed',
+        baseUrl: server.baseUrl,
+        root,
+        headless: true,
+        goal: { goal: 'Wander', until: 'text=Never there' },
+        jev,
+        browser,
+      }).catch((e) => e);
+      expect(err).toBeInstanceOf(Error);
+      expect((err as Error).message).toMatch(/browser-closed/);
+      const paths = reproPaths('jev-closed', root);
+      expect(existsSync(paths.ir)).toBe(false);
+      expect(existsSync(paths.storageState)).toBe(false);
+    } finally {
+      await browser.close().catch(() => {});
+    }
   });
 
   it('asks nothing when until already holds', async () => {

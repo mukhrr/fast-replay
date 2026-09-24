@@ -158,8 +158,12 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
     });
 
   // A goal that was not reached is not a repro: it never got to the bug, so
-  // replaying it would read as fixed. Nothing is written.
-  if (goalRun && driveError) throw driveError;
+  // replaying it would read as fixed. Nothing is written. `stopReason` also
+  // guards the case a hotkey, a browser close or SIGINT wins the race against
+  // the driver in launchRecording, leaving driveError null with --until never held.
+  if (goalRun && (driveError || stopReason !== 'programmatic')) {
+    throw driveError ?? new Error(`Recording stopped (${stopReason}) before --until held. Nothing was written.`);
+  }
 
   // A shared session is referenced, not copied: one file to refresh when it
   // expires, and no per-repro snapshot to go stale beside it.

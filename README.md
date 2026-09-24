@@ -198,7 +198,7 @@ Measured on one machine, same flow both ways.
 ## Limits
 
 - **If you already have a Playwright suite, keep using it.** This earns its keep for throwaway repros and agent loops, not as a test framework.
-- **You still have to get to the bug yourself.** Recording captures the observation; reaching the state it observes is your problem.
+- **You still have to get to the bug yourself, unless you use `--goal` with a TypeSafe key.** Recording captures the observation; reaching the state it observes is your problem.
 - **A bug with no console error or failed request needs a hand-written assertion** (`repro assert`), or `--expect-fixed` refuses to answer.
 - **A flow that mutates server state is single-shot.** Use `--setup` to reset, or `{{random}}` / `{{random:label}}` placeholders to make inputs unique.
 - Records clicks, right-clicks, typing, selects, key presses, scrolls, hovers, navigation and going offline. Top frame only, no iframes; drag-and-drop and file upload are untested.

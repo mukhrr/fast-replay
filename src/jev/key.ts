@@ -20,8 +20,9 @@ export function resolveKey(env: NodeJS.ProcessEnv = process.env): { key: string;
   let raw: string;
   try {
     raw = readFileSync(file, 'utf8');
-  } catch {
-    return null;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error(`${file}: could not be read (${(err as Error).message})`);
   }
   let parsed: { typesafeApiKey?: unknown };
   try {
@@ -46,8 +47,9 @@ export function deleteKey(env: NodeJS.ProcessEnv = process.env): boolean {
   const file = credentialsPath(env);
   try {
     readFileSync(file);
-  } catch {
-    return false;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw new Error(`${file}: could not be read (${(err as Error).message})`);
   }
   rmSync(file);
   return true;

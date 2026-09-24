@@ -51,4 +51,14 @@ describe('jev key', () => {
     expect(deleteKey(env)).toBe(false);
     await expect(readFile(credentialsPath(env))).rejects.toThrow();
   });
+
+  it('throws when credentials.json is a directory', async () => {
+    await mkdir(credentialsPath(env), { recursive: true });
+    expect(() => resolveKey(env)).toThrow(/credentials\.json/);
+  });
+
+  it('throws when deleting a directory in place of credentials.json', async () => {
+    await mkdir(credentialsPath(env), { recursive: true });
+    expect(() => deleteKey(env)).toThrow(/credentials\.json/);
+  });
 });

@@ -2,6 +2,9 @@ import path from 'node:path';
 import type { Browser, Page } from 'playwright';
 import { openBrowser } from './browser.js';
 import { compile } from './compiler/compile.js';
+import { createJevClient, type JevClient } from './jev/client.js';
+import { goalDrive, type GoalOptions } from './jev/driver.js';
+import { NO_KEY_MESSAGE, resolveKey } from './jev/key.js';
 import {
   listRepros,
   readRepro,
@@ -54,6 +57,13 @@ export interface RecordOptions {
   setup?: { step: string; params?: Record<string, string> }[];
   /** Record inside an already-running browser, e.g. the MCP server's pool. */
   browser?: Browser | null;
+  /**
+   * Let Jev pick each next action until `until` holds. Mutually exclusive with
+   * `drive`. Record time only: the IR it produces replays with no model.
+   */
+  goal?: GoalOptions;
+  /** The Jev client to ask; defaults to one built from the resolved key. Tests pass a fake. */
+  jev?: JevClient;
 }
 
 export interface RecordResult {
@@ -64,6 +74,8 @@ export interface RecordResult {
   session: SessionOutcome | null;
   /** Non-fatal things worth printing: sharing disabled and why, a start path that did not prove. */
   warnings: string[];
+  /** The actions Jev took, in order, when recorded with `goal`. */
+  goalPath?: string[];
 }
 
 /**
@@ -96,6 +108,18 @@ export class PartialRecordingError extends Error {
  * verifies a fix in one call with no per-step round trips.
  */
 export async function record(options: RecordOptions): Promise<RecordResult> {
+  if (options.goal && options.drive) throw new Error('record(): pass goal or drive, not both');
+  let goalRun: ReturnType<typeof goalDrive> | null = null;
+  if (options.goal) {
+    let client = options.jev;
+    if (!client) {
+      const key = resolveKey();
+      if (!key) throw new Error(NO_KEY_MESSAGE);
+      client = createJevClient(key.key);
+    }
+    goalRun = goalDrive(options.goal, client);
+  }
+
   const root = options.root ?? process.cwd();
   const paths = reproPaths(options.name, root);
 
@@ -125,13 +149,17 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
       profileDir: options.profileDir ?? null,
       onReady: options.onReady,
       headless: options.headless,
-      drive: options.drive,
+      drive: goalRun?.drive ?? options.drive,
       steps: sharedSteps,
       setup: declared,
       session: plan,
       root,
       browser: options.browser ?? null,
     });
+
+  // A goal that was not reached is not a repro: it never got to the bug, so
+  // replaying it would read as fixed. Nothing is written.
+  if (goalRun && driveError) throw driveError;
 
   // A shared session is referenced, not copied: one file to refresh when it
   // expires, and no per-repro snapshot to go stale beside it.
@@ -156,7 +184,7 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
   await writeRepro(repro, paths);
 
   if (driveError) throw new PartialRecordingError(driveError, paths.ir, repro);
-  return { repro, irPath: paths.ir, stopReason, session, warnings };
+  return { repro, irPath: paths.ir, stopReason, session, warnings, ...(goalRun ? { goalPath: [...goalRun.path] } : {}) };
 }
 
 export interface RunReproOptions extends RunOptions {
@@ -295,6 +323,9 @@ export {
   type SessionStatus,
 } from './sessions.js';
 export { STOP_HOTKEY };
+export { GoalNotReached, type GoalOptions } from './jev/driver.js';
+export { JevError, type JevClient } from './jev/client.js';
+export { NO_KEY_MESSAGE } from './jev/key.js';
 export type { DriveApi } from './recorder/launch.js';
 export { deleteRepro, readRepro, reproPaths } from './ir/io.js';
 export { compile } from './compiler/compile.js';

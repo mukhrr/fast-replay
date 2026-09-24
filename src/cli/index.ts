@@ -10,7 +10,9 @@ import {
   extractionNudge,
   fixRepro,
   GITIGNORE_BLOCK,
+  GoalNotReached,
   initProject,
+  JevError,
   list,
   loadDrive,
   MCP_CONFIG_SNIPPET,
@@ -30,6 +32,10 @@ import { loadSteps, STEPS_DIR } from '../steps.js';
 import { IRValidationError, type Repro } from '../ir/schema.js';
 import type { RunResult } from '../replayer/run.js';
 import { age, bold, cyan, dim, green, ms, red, table, truncate, yellow } from './format.js';
+import { parseInputs, readSecret, WHAT_IS_SENT } from './jev.js';
+import { createJevClient } from '../jev/client.js';
+import { credentialsPath, deleteKey, resolveKey, saveKey } from '../jev/key.js';
+import { markNoticeShown, noticeText, shouldShowNotice } from '../notice.js';
 import { VERSION } from '../version.js';
 
 const program = new Command();
@@ -70,12 +76,22 @@ program
   .option('--profile <dir>', 'record against a persistent Chromium profile (reuses a login)')
   .option('--drive <file>', 'run a drive file (defineDrive) instead of waiting for a human; headless')
   .option('--headed', 'with --drive, watch the recording in a visible browser', false)
+  .option('--goal <text>', 'let Jev walk to the bug: what the user is trying to do (needs a TypeSafe key)')
+  .option('--until <check>', 'with --goal: selector, text=<visible text> or url=<part of the URL> that means reached')
+  .option('--input <Label=value>', 'with --goal: a value Jev may type into the field with that label; repeatable', (v: string, acc: string[]) => [...acc, v], [] as string[])
+  .option('--max-steps <n>', 'with --goal: give up after this many actions', '12')
   .description('launch an instrumented browser and record a bug reproduction')
   .action(async (name: string, opts) => {
     const viewport = parseViewport(opts.viewport);
     const driven = opts.drive ? await loadDrive(path.resolve(opts.drive)) : null;
 
-    const { repro, irPath, stopReason, session, warnings } = await record({
+    if (opts.goal && opts.drive) throw new Error('--goal and --drive cannot be used together');
+    if (opts.goal && !opts.until) throw new Error('--goal needs --until: a selector, text=<visible text> or url=<part of the URL>');
+    const goal = opts.goal
+      ? { goal: opts.goal as string, until: opts.until as string, inputs: parseInputs(opts.input as string[]), maxSteps: Number(opts.maxSteps) }
+      : undefined;
+
+    const { repro, irPath, stopReason, session, warnings, goalPath } = await record({
       name,
       baseUrl: opts.url,
       startPath: opts.path,
@@ -84,12 +100,15 @@ program
       profileDir: opts.profile ?? null,
       // A driven recording has nobody watching, so it runs headless unless asked.
       ...(driven ? { drive: driven.drive, setup: driven.setup, headless: !opts.headed } : {}),
+      ...(goal ? { goal, headless: !opts.headed } : {}),
       onReady: () => {
         console.log(`${green('●')} ${bold('Recording')} ${cyan(name)} on ${opts.url}${opts.path}`);
         console.log(
           driven
             ? dim(`  Driving from ${path.relative(process.cwd(), path.resolve(opts.drive))}.`)
-            : dim(`  Reproduce the bug, then press ${STOP_HOTKEY} — or just close the browser.`),
+            : goal
+              ? dim(`  Jev is walking to: ${goal.goal}`)
+              : dim(`  Reproduce the bug, then press ${STOP_HOTKEY} — or just close the browser.`),
         );
         console.log('');
       },
@@ -106,6 +125,7 @@ program
       `${green('✓')} Captured ${bold(String(repro.steps.length))} steps ${dim(`(stopped: ${stopReason})`)}`,
     );
     console.log(`  ${dim('→')} ${path.relative(process.cwd(), irPath)}`);
+    if (goalPath) console.log(`  ${dim('path')} ${goalPath.length ? goalPath.join(' → ') : 'already there, no actions'}`);
     // Warnings first: the session line points at them when sharing is off.
     for (const warning of warnings) console.log(`  ${yellow('!')} ${warning}`);
     if (repro.setup.length) {
@@ -502,10 +522,67 @@ function reportFail(result: RunResult): void {
   }
 }
 
+const jev = program.command('jev').description('optional TypeSafe Jev key, used only by repro record --goal');
+
+jev
+  .command('login')
+  .description('save a TypeSafe API key to your user config, never the project')
+  .action(async () => {
+    const key = await readSecret('TypeSafe API key: ');
+    if (!key) throw new Error('No key given.');
+    await createJevClient(key).choice({ check: 'connectivity' }, 'Is this a connectivity check?', { yes: 'yes', no: 'no' });
+    console.log(`${green('✓')} Key works, saved to ${saveKey(key)}`);
+  });
+
+jev
+  .command('logout')
+  .description('delete the saved key')
+  .action(() => {
+    console.log(deleteKey() ? `${green('✓')} Removed ${credentialsPath()}` : dim('No saved key.'));
+    if (process.env.TYPESAFE_API_KEY) console.log(yellow('  TYPESAFE_API_KEY is still set in this shell.'));
+  });
+
+jev
+  .command('status')
+  .description('where the key comes from, whether it works, and what is sent')
+  .action(async () => {
+    const key = resolveKey();
+    if (!key) {
+      console.log(`${dim('key')}    none. ${noticeText(VERSION).split('\n').slice(-2).join(' ')}`);
+      return;
+    }
+    console.log(`${dim('key')}    from ${key.source === 'env' ? 'TYPESAFE_API_KEY' : credentialsPath()}`);
+    const started = Date.now();
+    try {
+      await createJevClient(key.key).choice({ check: 'connectivity' }, 'Is this a connectivity check?', { yes: 'yes', no: 'no' });
+      console.log(`${dim('api')}    ${green('ok')} in ${ms(Date.now() - started)}`);
+    } catch (err) {
+      console.log(`${dim('api')}    ${red((err as Error).message)}`);
+      process.exitCode = 1;
+    }
+    console.log(dim('sent per step while recording with --goal, never at replay:'));
+    for (const item of WHAT_IS_SENT) console.log(dim(`  - ${item}`));
+  });
+
 async function main(): Promise<void> {
   try {
+    if (shouldShowNotice({ version: VERSION, env: process.env, isTTY: Boolean(process.stdout.isTTY) })) {
+      console.error(dim(noticeText(VERSION)) + '\n');
+      markNoticeShown(VERSION);
+    }
     await program.parseAsync(process.argv);
   } catch (err) {
+    if (err instanceof GoalNotReached) {
+      console.error(`${yellow('!')} ${err.message}. Nothing was written.`);
+      console.error(dim(`  tried: ${err.path.length ? err.path.join(' → ') : 'no actions'}`));
+      process.exitCode = 1;
+      return;
+    }
+    if (err instanceof JevError) {
+      console.error(`${red('✗')} ${err.message} Nothing was written.`);
+      process.exitCode = 1;
+      return;
+    }
     if (err instanceof PartialRecordingError) {
       // The steps captured before the failure are on disk and worth having.
       console.error(`${yellow('!')} ${err.message}`);

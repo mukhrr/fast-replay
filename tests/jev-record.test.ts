@@ -5,7 +5,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GoalNotReached, record, reproPaths, run } from '../src/api.js';
-import type { ChoiceAnswer, JevClient } from '../src/jev/client.js';
+import { JevError, type ChoiceAnswer, type JevClient } from '../src/jev/client.js';
 import { startDemoServer, type DemoServer } from './helpers/demo-server.js';
 
 let server: DemoServer;
@@ -102,6 +102,52 @@ describe('goal-driven recording', () => {
     const paths = reproPaths('jev-none', root);
     expect(existsSync(paths.ir)).toBe(false);
     expect(existsSync(paths.storageState)).toBe(false);
+  });
+
+  it('names the input problem when the goal is not reached', async () => {
+    const jev = scriptedJev(['none']);
+    const err = await record({
+      name: 'jev-badinput',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      goal: { goal: 'Do something', until: 'text=Never there', inputs: { Nonexistent: 'x' } },
+      jev,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(GoalNotReached);
+    expect(err.reason).toBe('none');
+    expect(err.message).toMatch(/--input labels not found on the last page: Nonexistent\. Fields there: /);
+  });
+
+  it('refuses a malformed answer instead of acting on it as if it were offered', async () => {
+    // 'constructor' is inherited from Object.prototype, so a plain `in` check
+    // used to treat it as an offered option and crash indexing candidates[NaN].
+    const jev: JevClient = { async choice() { return { choice: 'constructor', confidence: 0.9, probabilities: {} }; } };
+    const err = await record({
+      name: 'jev-malformed',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      goal: { goal: 'Wander', until: 'text=Never there' },
+      jev,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(JevError);
+    expect(err.message).toBe('Jev chose an option that was not offered.');
+    expect(existsSync(reproPaths('jev-malformed', root).ir)).toBe(false);
+  });
+
+  it('refuses an out-of-range option instead of treating it as none', async () => {
+    const jev: JevClient = { async choice() { return { choice: 'c999', confidence: 0.9, probabilities: {} }; } };
+    const err = await record({
+      name: 'jev-outofrange',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      goal: { goal: 'Wander', until: 'text=Never there' },
+      jev,
+    }).catch((e) => e);
+    expect(err).toBeInstanceOf(JevError);
+    expect(err.message).toBe('Jev chose an option that was not offered.');
   });
 
   it('saves nothing when the step limit is hit', async () => {

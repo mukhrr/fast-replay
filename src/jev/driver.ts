@@ -1,6 +1,6 @@
 import type { Page, Request } from 'playwright';
 import type { DriveApi } from '../recorder/launch.js';
-import type { JevClient } from './client.js';
+import { JevError, type JevClient } from './client.js';
 import { collectCandidates, parseUntil, readPageState, untilHolds } from './page.js';
 
 export interface GoalOptions {
@@ -15,14 +15,42 @@ export class GoalNotReached extends Error {
     readonly reason: 'none' | 'max-steps',
     readonly path: string[],
     maxSteps: number,
+    problems: string[] = [],
   ) {
     super(
-      reason === 'none'
-        ? 'Jev found no action toward the goal'
-        : `stopped after ${maxSteps} steps without reaching --until`,
+      [
+        reason === 'none' ? 'Jev found no action toward the goal' : `stopped after ${maxSteps} steps without reaching --until`,
+        ...problems,
+      ].join('\n'),
     );
     this.name = 'GoalNotReached';
   }
+}
+
+/**
+ * Names what is wrong with `inputs`, based on the last page seen, for the
+ * GoalNotReached message: a label matching no field at all, and separately a
+ * label that names a password field, which Jev never fills.
+ */
+export function describeInputProblems(
+  inputs: Record<string, string> | undefined,
+  fields: Record<string, string>,
+  passwordLabels: string[],
+): string[] {
+  const labels = Object.keys(inputs ?? {});
+  if (!labels.length) return [];
+  const notFound = labels.filter((l) => !(l in fields));
+  const problems: string[] = [];
+  if (notFound.length) {
+    const known = Object.keys(fields);
+    problems.push(
+      `--input labels not found on the last page: ${notFound.join(', ')}. Fields there: ${known.length ? known.join(', ') : 'none'}`,
+    );
+  }
+  if (labels.some((l) => passwordLabels.includes(l))) {
+    problems.push('password fields are never filled by Jev; sign in with --storage-state, --profile or a setup step');
+  }
+  return problems;
 }
 
 export const JEV_INSTRUCTIONS =
@@ -100,16 +128,25 @@ export function goalDrive(options: GoalOptions, client: JevClient): { drive: (pa
       await settle(page, requests);
       for (let step = 0; ; step++) {
         if (await untilHolds(page, check)) return;
-        if (step >= maxSteps) throw new GoalNotReached('max-steps', [...taken], maxSteps);
+        if (step >= maxSteps) {
+          const { passwordLabels, fields } = await readPageState(page);
+          throw new GoalNotReached('max-steps', [...taken], maxSteps, describeInputProblems(options.inputs, fields, passwordLabels));
+        }
         const found = await collectCandidates(page, options.inputs ?? {});
         try {
           const criteria: Record<string, string> = { none: NONE };
           found.candidates.forEach((c, i) => (criteria[`c${i}`] = c.desc));
-          const state = { goal: options.goal, ...(await readPageState(page)), recent_actions: [...taken] };
+          const { passwordLabels, ...pageState } = await readPageState(page);
+          const state = { goal: options.goal, ...pageState, recent_actions: [...taken] };
           // Act on the most probable option whatever its confidence: several fine next
           // actions split the probability, and only "none" winning means stop.
           const answer = await client.choice(state, JEV_INSTRUCTIONS, criteria);
-          if (answer.choice === 'none' || !(answer.choice in criteria)) throw new GoalNotReached('none', [...taken], maxSteps);
+          if (answer.choice === 'none') {
+            throw new GoalNotReached('none', [...taken], maxSteps, describeInputProblems(options.inputs, pageState.fields, passwordLabels));
+          }
+          // `in` also matches inherited keys like "constructor", which is not an offered
+          // option and previously slipped past this check as if Jev had chosen it.
+          if (!Object.hasOwn(criteria, answer.choice)) throw new JevError('Jev chose an option that was not offered.', 'invalid');
           const index = Number(answer.choice.slice(1));
           const candidate = found.candidates[index]!;
           const el = await found.element(index);

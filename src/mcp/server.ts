@@ -8,6 +8,8 @@ import {
   deleteRepro,
   describeSession,
   extractionNudge,
+  GoalNotReached,
+  JevError,
   list,
   loadDrive,
   openSession,
@@ -19,6 +21,7 @@ import {
   run,
   SHARING_DISABLED_WARNING,
   suggestExtractions,
+  type JevClient,
   type RecordResult,
   type WarmSession,
 } from '../api.js';
@@ -138,7 +141,7 @@ export async function createServer(root = process.cwd()): Promise<McpServer> {
   return (await createReplayServer(root)).server;
 }
 
-export async function createReplayServer(root = process.cwd()): Promise<ReplayServer> {
+export async function createReplayServer(root = process.cwd(), options: { jev?: JevClient } = {}): Promise<ReplayServer> {
   // Instructions travel in the initialize response, so this is the one moment
   // the project's state can reach the agent before its first tool call.
   const server = new McpServer(
@@ -339,28 +342,37 @@ export async function createReplayServer(root = process.cwd()): Promise<ReplaySe
         'walks to the bug with Playwright and observe() names the evidence while it is on screen. ' +
         'Declare the sign-in step in setup so the stored project session is reused instead of signing in again. ' +
         'Write the file at .repros/drive/<name>.mjs, call this once, then verify fixes with repro_run. ' +
-        'Returns the steps captured, the bug signature seen while recording, and whether a session was reused.',
+        'Returns the steps captured, the bug signature seen while recording, and whether a session was reused.' +
+        ' Or, with a TypeSafe key set, pass goal, until and inputs instead of drive: Jev picks each action while recording; nothing is saved unless until holds.',
       inputSchema: {
         name: z.string().describe('Name for the repro. Letters, digits, dot, dash, underscore.'),
         url: z.string().describe('Base URL of the running app, e.g. http://localhost:3000.'),
-        drive: z.string().describe('Path to the drive file, relative to the project root or absolute.'),
+        drive: z.string().optional().describe('Path to the drive file, relative to the project root or absolute. Exactly one of drive or goal.'),
+        goal: z.string().optional().describe('What the user is trying to do; Jev picks each action. Needs a TypeSafe key. Exactly one of drive or goal.'),
+        until: z.string().optional().describe('With goal: selector, text=<visible text> or url=<part of the URL> that means the goal is reached.'),
+        inputs: z.record(z.string(), z.string()).optional().describe('With goal: field label to the value Jev may type there.'),
         start_path: z.string().optional().describe('Path to start at. Default /.'),
         headed: z.boolean().optional().describe('Record in a visible browser. Default false.'),
         viewport: z.string().optional().describe('WxH, default 1440x900.'),
       },
     },
-    async ({ name, url, drive, start_path, headed, viewport }) => {
+    async ({ name, url, drive, goal, until, inputs, start_path, headed, viewport }) => {
       const refuse = (message: string) => ({
         content: [{ type: 'text' as const, text: message }],
         isError: true,
         structuredContent: { name, partial: false, error: message },
       });
 
-      let driven: Awaited<ReturnType<typeof loadDrive>>;
-      try {
-        driven = await loadDrive(path.resolve(root, drive));
-      } catch (err) {
-        return refuse((err as Error).message);
+      if (Boolean(drive) === Boolean(goal)) return refuse('Pass exactly one of drive or goal.');
+      if (goal && !until) return refuse('goal needs until: a selector, text=<visible text> or url=<part of the URL>.');
+
+      let driven: Awaited<ReturnType<typeof loadDrive>> | null = null;
+      if (drive) {
+        try {
+          driven = await loadDrive(path.resolve(root, drive));
+        } catch (err) {
+          return refuse((err as Error).message);
+        }
       }
 
       const started = Date.now();
@@ -374,11 +386,13 @@ export async function createReplayServer(root = process.cwd()): Promise<ReplaySe
           startPath: start_path ?? '/',
           viewport: parseViewport(viewport ?? '1440x900'),
           headless: !headed,
-          drive: driven.drive,
-          setup: driven.setup,
           browser: await pool.acquire(!headed),
+          ...(driven ? { drive: driven.drive, setup: driven.setup } : { goal: { goal: goal!, until: until!, inputs: inputs ?? {} }, ...(options.jev ? { jev: options.jev } : {}) }),
         });
       } catch (err) {
+        if (err instanceof GoalNotReached) {
+          return refuse(`${err.message}. Nothing was written.\nTried: ${err.path.length ? err.path.join(' → ') : 'no actions'}`);
+        }
         if (!(err instanceof PartialRecordingError)) return refuse((err as Error).message);
         partial = err;
       }
@@ -406,6 +420,7 @@ export async function createReplayServer(root = process.cwd()): Promise<ReplaySe
             `RECORDED ${name} — ${repro.steps.length} ${stepWord} in ${seconds}s (stopped: ${result!.stopReason})`,
             `IR: ${irPath}`,
           ];
+      if (result?.goalPath) lines.push(`Path: ${result.goalPath.length ? result.goalPath.join(' → ') : 'already there, no actions'}`);
       // Warnings before the session line, which points at them when sharing is off.
       for (const warning of result?.warnings ?? []) lines.push(`Note: ${warning}`);
       if (!partial) {

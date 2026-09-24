@@ -3,6 +3,7 @@ import path from 'node:path';
 import { age } from './cli/format.js';
 import { extractionNudge } from './extract.js';
 import { listRepros, readRepro } from './ir/io.js';
+import { resolveKey } from './jev/key.js';
 import { parseSessionPath, readMeta, SESSIONS_DIR } from './sessions.js';
 import { loadSteps, STEPS_DIR } from './steps.js';
 
@@ -29,6 +30,7 @@ Workflow for one issue:
        async drive(page, { step, observe }) { /* Playwright to the bug; observe('<selector>') names the evidence while it is on screen */ },
      });
    then call repro_record. Declare the sign-in step in setup so the project's stored session is reused instead of signing in again.
+   With a TypeSafe key set, repro_record also takes goal, until and inputs instead of a drive file: Jev picks each click while recording, until is checked by code, and nothing is saved unless it holds. Replay never uses a model.
 3. Fix the code, then repro_run with expect_fixed=true after every change. BUG FIXED means done. COULD NOT VERIFY means the harness could not drive the app and says nothing about the bug; read the failing step before touching the fix.
 4. When repro_list or repro_record says several repros share a prefix, repro_extract turns it into a shared step so the next issue starts faster. You name the step.
 5. repro_delete once the fix is confirmed. Repros are disposable; steps, config and sessions stay.`;
@@ -106,5 +108,11 @@ export async function renderProjectSnapshot(root: string): Promise<string> {
 }
 
 export async function buildInstructions(root: string): Promise<string> {
-  return `${AGENT_WORKFLOW}\n\n${await renderProjectSnapshot(root)}`;
+  let jev = 'Jev: no key set, so repro_record needs a drive file.';
+  try {
+    if (resolveKey()) jev = 'Jev: key set, so repro_record accepts goal, until and inputs.';
+  } catch {
+    // A broken credentials file surfaces when a goal recording asks for the key.
+  }
+  return `${AGENT_WORKFLOW}\n\n${await renderProjectSnapshot(root)}\n\n${jev}`;
 }

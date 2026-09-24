@@ -157,10 +157,9 @@ export async function record(options: RecordOptions): Promise<RecordResult> {
       browser: options.browser ?? null,
     });
 
-  // A goal that was not reached is not a repro: it never got to the bug, so
-  // replaying it would read as fixed. Nothing is written. `stopReason` also
-  // guards the case a hotkey, a browser close or SIGINT wins the race against
-  // the driver in launchRecording, leaving driveError null with --until never held.
+  // A goal that was not reached is not a repro: replaying it would read as fixed.
+  // stopReason also catches a hotkey, browser close or SIGINT winning the race
+  // against the driver, which leaves driveError null with --until never held.
   if (goalRun && (driveError || stopReason !== 'programmatic')) {
     throw driveError ?? new Error(`Recording stopped (${stopReason}) before --until held. Nothing was written.`);
   }

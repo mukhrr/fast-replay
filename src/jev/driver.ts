@@ -44,13 +44,8 @@ interface RequestTracker {
 }
 
 /**
- * Watches `page`'s requests for the life of one drive() run.
- *
- * `page.waitForLoadState('networkidle')` resolves immediately once the page
- * has already reached that state, so it never sees a fetch a click starts
- * afterward, which is exactly what clicking "Generate report" does. This
- * tracks requests directly, so settling means the click's own request
- * finished, not that the page loaded a while ago.
+ * Watches `page`'s requests for the life of one drive() run: `waitForLoadState('networkidle')`
+ * would miss a fetch a click starts once the page is already idle, so this tracks requests directly instead.
  */
 function trackRequests(page: Page): RequestTracker {
   const inFlight = new Set<Request>();

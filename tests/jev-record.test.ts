@@ -56,6 +56,37 @@ describe('goal-driven recording', () => {
     expect(replay.failure?.kind).not.toBe('infrastructure');
   });
 
+  it('waits for a request the last action started before checking --until', async () => {
+    // Generating a report is deliberately slow (mock-api.ts's SLOW_REPORT_MS):
+    // proves settle() waits for the POST the click starts rather than moving
+    // on once the page's own load state goes idle.
+    await fetch(`${server.baseUrl}/api/reset`, { method: 'POST' });
+    const jev = scriptedJev([
+      'click button "Reports"',
+      'type "Weekly rollup" in the "Report title" field',
+      'choose "Sensor 3" in the "Sensor" field',
+      'click button "Generate report"',
+    ]);
+    const result = await record({
+      name: 'jev-report',
+      baseUrl: server.baseUrl,
+      root,
+      headless: true,
+      goal: {
+        goal: 'Generate a report titled Weekly rollup for Sensor 3',
+        until: '[data-testid="report-result"]',
+        inputs: { 'Report title': 'Weekly rollup', Sensor: 'Sensor 3' },
+      },
+      jev,
+    });
+    expect(result.goalPath).toEqual([
+      'click button "Reports"',
+      'type "Weekly rollup" in the "Report title" field',
+      'choose "Sensor 3" in the "Sensor" field',
+      'click button "Generate report"',
+    ]);
+  });
+
   it('saves nothing when Jev picks none', async () => {
     const jev = scriptedJev(['none']);
     const err = await record({
@@ -92,7 +123,7 @@ describe('goal-driven recording', () => {
   it('saves nothing when the recording stops before the goal is reached for a reason other than the driver finishing', async () => {
     // The scripted answer closes the whole browser before responding, so the
     // context's own 'close' listener stops the session with 'browser-closed'
-    // while the driver is still mid-choice — driveError never gets set.
+    // while the driver is still mid-choice, and driveError never gets set.
     const browser = await chromium.launch({ headless: true });
     const jev: JevClient = {
       async choice(_state, _instructions, criteria) {

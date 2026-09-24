@@ -104,6 +104,19 @@ export default defineDrive({
 
 `repro_record` runs it headless (`repro record <name> --url <base> --drive <file>` from the CLI). `repro_run` returns the verdict, the failing step, console, network and the page as an inline image, in one call. Between calls the server keeps the browser warm, since one issue means many runs against the same repro; pass `reuse: false` for a verification that must stand alone. Also exposed: `repro_list`, `repro_steps`, `repro_extract`, `repro_artifacts`, `repro_delete`. Works with Claude Code, Codex, Gemini CLI, Cursor.
 
+### Let Jev walk to the bug (optional)
+
+With a [TypeSafe](https://typesafe.ai) key, recording can start from a goal instead of a script:
+
+```bash
+repro jev login
+repro record report-bug -u http://localhost:5173 \
+  --goal "Generate a report titled Weekly rollup" \
+  --until '[data-testid="report-result"]' --input "Report title=Weekly rollup"
+```
+
+Jev picks each step in about 0.3 s; `--until` is checked by code and nothing is saved unless it holds. Replay never calls a model. Without a key everything works as before. What is sent: `repro jev status`.
+
 ## Shared setup steps
 
 The preamble to a bug is the same across most repros: sign in, open a workspace, get to a chat. Write it once:

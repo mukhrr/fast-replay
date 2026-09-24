@@ -1,5 +1,23 @@
 # Changelog
 
+## 1.0.0 — 2026-09-24
+
+### Record by goal, optionally with Jev
+
+Walking to a bug is the slow part of recording: a person has to start, and an LLM agent spends seconds per step deciding which button comes next. With a TypeSafe key set, `repro record <name> -u <url> --goal "..." --until <check>` lets Jev, TypeSafe's System One model, pick each click, fill or select from what is on screen. `--until` (a selector, `text=...` for an exact match of visible text, or `url=...`) is checked by code after every step, once that step's requests have settled; the recording is saved only when it holds, so a run that never reached the bug, including one stopped early by hotkey, browser close or Ctrl-C, cannot read as fixed later. Jev types only the values given with `--input "Label=value"`, and `--max-steps` (a positive whole number, default 12) caps how many actions it may try before giving up. `repro_record` takes the same `goal`, `until` and `inputs` fields.
+
+On the demo app, six goals three times each, Jev, Haiku and Sonnet all reached 18 of 18 and refused the impossible goal; the median decision took 343 ms with Jev against 1.7 s (Sonnet) and 4.3 s (Haiku) at the API.
+
+The rule changes from "no model calls anywhere" to "no model calls at replay". The IR is unchanged and a repro recorded by goal replays with no key.
+
+Per step, the goal, URL path, headings, control names, field labels and values (passwords masked), status text and actions so far go to `api.typesafe.ai`. Nothing is sent at replay or without a key.
+
+`repro jev login` saves the key to `~/.config/fast-replay/credentials.json` (mode 0600, never the project); `TYPESAFE_API_KEY` wins over it. `repro jev status` shows where the key comes from, pings the API when one is set, and lists what is sent either way. `repro jev logout` removes it.
+
+The first `repro` command after an install or update prints a three-line note about this, once per version, on a terminal, and not when a key is already set or `FAST_REPLAY_NO_NOTICE=1`. There is no postinstall script.
+
+Without a key nothing changes, and no dependency was added.
+
 ## 0.13.0 — 2026-09-02
 
 ### Agents record too

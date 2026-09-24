@@ -45,11 +45,13 @@ The pipeline is **record → compile → IR → replay**, with three thin surfac
 
 **Drive files** (`src/drive.ts`): `defineDrive({ setup, drive })` in `.repros/drive/<name>.mjs`, run by `repro record --drive` and the MCP `repro_record`. Same IR as a programmatic `record()`. User modules (steps and drive files) are imported through `src/import-fresh.ts`, which puts the file's mtime in the URL so the long-lived MCP server sees edits.
 
+**Jev** (`src/jev/`): optional, record time only. `key.ts` resolves `TYPESAFE_API_KEY` or `~/.config/fast-replay/credentials.json`; `client.ts` calls the TypeSafe API over `fetch`; `page.ts` reads candidates as element handles (never writing to the DOM the recorder watches) and the page state with passwords masked; `driver.ts` turns a goal into an ordinary `drive` function, waiting for the requests an action started (quiet 500 ms, capped at 10 s) before checking `--until`. A goal that does not reach `--until` writes nothing, including when the run is stopped early. `src/notice.ts` prints the once-per-version first-run notice.
+
 **Config and layout** (`src/config.ts`, `src/init.ts`, `src/agent-notes.ts`): `.repros/config.json` holds `extractThreshold`. `repro init` writes `.repros/*` plus two exceptions to `.gitignore` so steps and config are committed while repros, sessions and drive files are not. `AGENT_WORKFLOW` is both what `repro init` prints for CLAUDE.md and the MCP server's `instructions`, followed by a snapshot of steps, stored sessions, repros and pending extractions. The extraction nudge (`extractionNudge`) appears after a recording and in listings, never in a run result.
 
 ## Design principles that constrain changes
 
-- **No model calls anywhere in this tool.** It is the deterministic eye an agent looks through; anything requiring judgement belongs to the caller.
+- **No model calls at replay.** Replay, the verdict and the IR are deterministic; nothing under `src/replayer/` imports `src/jev/` (a test enforces it). The one model call is optional and record-time only: `record --goal` asks Jev (`src/jev/`) for the next action when a TypeSafe key is set. Anything else requiring judgement belongs to the caller.
 - **Refuse rather than guess.** A confident wrong verdict is the one unacceptable output. When a selector resolves to the wrong element or setup fails, report `COULD NOT VERIFY`, not pass/fail.
 - **The IR is hand-editable JSON, not generated code.** Keep it readable; the replayer stays dumb (tries selector candidates in order, never rewrites them).
 - Comments in this codebase state design rationale — why a constant has its value, what failure a guard prevents. Match that idiom.

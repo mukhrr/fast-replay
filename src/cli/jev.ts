@@ -20,6 +20,12 @@ export function parseInputs(pairs: string[]): Record<string, string> {
   return out;
 }
 
+export function parseMaxSteps(value: string): number {
+  const n = Number(value);
+  if (!Number.isInteger(n) || n <= 0) throw new Error('--max-steps must be a positive whole number');
+  return n;
+}
+
 /** Reads piped stdin when there is one, otherwise prompts without echoing. */
 export async function readSecret(prompt: string): Promise<string> {
   if (!process.stdin.isTTY) {

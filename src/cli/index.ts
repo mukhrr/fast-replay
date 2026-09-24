@@ -32,7 +32,7 @@ import { loadSteps, STEPS_DIR } from '../steps.js';
 import { IRValidationError, type Repro } from '../ir/schema.js';
 import type { RunResult } from '../replayer/run.js';
 import { age, bold, cyan, dim, green, ms, red, table, truncate, yellow } from './format.js';
-import { parseInputs, readSecret, WHAT_IS_SENT } from './jev.js';
+import { parseInputs, parseMaxSteps, readSecret, WHAT_IS_SENT } from './jev.js';
 import { createJevClient } from '../jev/client.js';
 import { credentialsPath, deleteKey, resolveKey, saveKey } from '../jev/key.js';
 import { markNoticeShown, noticeText, shouldShowNotice } from '../notice.js';
@@ -82,14 +82,19 @@ program
   .option('--max-steps <n>', 'with --goal: give up after this many actions', '12')
   .description('launch an instrumented browser and record a bug reproduction')
   .action(async (name: string, opts) => {
-    const viewport = parseViewport(opts.viewport);
-    const driven = opts.drive ? await loadDrive(path.resolve(opts.drive)) : null;
-
     if (opts.goal && opts.drive) throw new Error('--goal and --drive cannot be used together');
     if (opts.goal && !opts.until) throw new Error('--goal needs --until: a selector, text=<visible text> or url=<part of the URL>');
     const goal = opts.goal
-      ? { goal: opts.goal as string, until: opts.until as string, inputs: parseInputs(opts.input as string[]), maxSteps: Number(opts.maxSteps) }
+      ? {
+          goal: opts.goal as string,
+          until: opts.until as string,
+          inputs: parseInputs(opts.input as string[]),
+          maxSteps: parseMaxSteps(opts.maxSteps as string),
+        }
       : undefined;
+
+    const viewport = parseViewport(opts.viewport);
+    const driven = opts.drive ? await loadDrive(path.resolve(opts.drive)) : null;
 
     const { repro, irPath, stopReason, session, warnings, goalPath } = await record({
       name,
@@ -548,17 +553,17 @@ jev
   .action(async () => {
     const key = resolveKey();
     if (!key) {
-      console.log(`${dim('key')}    none. ${noticeText(VERSION).split('\n').slice(-2).join(' ')}`);
-      return;
-    }
-    console.log(`${dim('key')}    from ${key.source === 'env' ? 'TYPESAFE_API_KEY' : credentialsPath()}`);
-    const started = Date.now();
-    try {
-      await createJevClient(key.key).choice({ check: 'connectivity' }, 'Is this a connectivity check?', { yes: 'yes', no: 'no' });
-      console.log(`${dim('api')}    ${green('ok')} in ${ms(Date.now() - started)}`);
-    } catch (err) {
-      console.log(`${dim('api')}    ${red((err as Error).message)}`);
-      process.exitCode = 1;
+      console.log(`${dim('key')}    none. Set TYPESAFE_API_KEY or run repro jev login.`);
+    } else {
+      console.log(`${dim('key')}    from ${key.source === 'env' ? 'TYPESAFE_API_KEY' : credentialsPath()}`);
+      const started = Date.now();
+      try {
+        await createJevClient(key.key).choice({ check: 'connectivity' }, 'Is this a connectivity check?', { yes: 'yes', no: 'no' });
+        console.log(`${dim('api')}    ${green('ok')} in ${ms(Date.now() - started)}`);
+      } catch (err) {
+        console.log(`${dim('api')}    ${red((err as Error).message)}`);
+        process.exitCode = 1;
+      }
     }
     console.log(dim('sent per step while recording with --goal, never at replay:'));
     for (const item of WHAT_IS_SENT) console.log(dim(`  - ${item}`));

@@ -99,4 +99,37 @@ describe('repro_record with a goal', () => {
     await replay.dispose();
     await client.close();
   });
+
+  it('refuses setup naming a step that does not exist', async () => {
+    const jev: JevClient = { async choice() { return { choice: 'none', confidence: 0.9, probabilities: { none: 0.9 } }; } };
+    const { client, replay, call } = await connect(jev);
+    const result = await call({
+      name: 'g5',
+      url: server.baseUrl,
+      goal: 'Open reports',
+      until: 'url=/reports',
+      setup: [{ step: 'signed-in' }],
+    });
+    expect(result.isError).toBe(true);
+    // No .repros/steps directory in this scratch root, so record() rejects
+    // before opening a browser — this is StepError's own message, unchanged.
+    expect(text(result)).toMatch(/Shared step "signed-in" is not defined/);
+    expect(existsSync(reproPaths('g5', root).ir)).toBe(false);
+    await replay.dispose();
+    await client.close();
+  });
+
+  it('refuses setup together with drive', async () => {
+    const { client, replay, call } = await connect();
+    const result = await call({
+      name: 'g6',
+      url: server.baseUrl,
+      drive: 'does-not-matter.mjs',
+      setup: [{ step: 'signed-in' }],
+    });
+    expect(result.isError).toBe(true);
+    expect(text(result)).toMatch(/setup is for goal/);
+    await replay.dispose();
+    await client.close();
+  });
 });

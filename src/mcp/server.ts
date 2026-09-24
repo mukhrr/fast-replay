@@ -335,14 +335,15 @@ export async function createReplayServer(root = process.cwd(), options: { jev?: 
   server.registerTool(
     'repro_record',
     {
-      title: 'Record a bug repro from a drive file',
+      title: 'Record a bug repro from a drive file or a goal',
       description:
         'Record a repro by running a drive file: a module exporting defineDrive({ setup, drive }) where drive(page, { step, observe }) ' +
         'walks to the bug with Playwright and observe() names the evidence while it is on screen. ' +
         'Declare the sign-in step in setup so the stored project session is reused instead of signing in again. ' +
         'Write the file at .repros/drive/<name>.mjs, call this once, then verify fixes with repro_run. ' +
         'Returns the steps captured, the bug signature seen while recording, and whether a session was reused.' +
-        ' Or, with a TypeSafe key set, pass goal, until and inputs instead of drive: Jev picks each action while recording; nothing is saved unless until holds.',
+        ' Or, with a TypeSafe key set, pass goal, until and inputs instead of drive: Jev picks each action while recording; nothing is saved unless until holds. ' +
+        'With goal, setup may declare shared steps (e.g. signing in) to run first — a drive file declares its own setup instead, so setup and drive together are refused.',
       inputSchema: {
         name: z.string().describe('Name for the repro. Letters, digits, dot, dash, underscore.'),
         url: z.string().describe('Base URL of the running app, e.g. http://localhost:3000.'),
@@ -350,12 +351,16 @@ export async function createReplayServer(root = process.cwd(), options: { jev?: 
         goal: z.string().optional().describe('What the user is trying to do; Jev picks each action. Needs a TypeSafe key. Exactly one of drive or goal.'),
         until: z.string().optional().describe('With goal: selector, text=<visible text> or url=<part of the URL> that means the goal is reached.'),
         inputs: z.record(z.string(), z.string()).optional().describe('With goal: field label to the value Jev may type there.'),
+        setup: z
+          .array(z.object({ step: z.string(), params: z.record(z.string(), z.string()).optional() }))
+          .optional()
+          .describe('With goal: shared setup steps (from repro_steps) to run before Jev starts, e.g. signing in. Refused together with drive.'),
         start_path: z.string().optional().describe('Path to start at. Default /.'),
         headed: z.boolean().optional().describe('Record in a visible browser. Default false.'),
         viewport: z.string().optional().describe('WxH, default 1440x900.'),
       },
     },
-    async ({ name, url, drive, goal, until, inputs, start_path, headed, viewport }) => {
+    async ({ name, url, drive, goal, until, inputs, setup, start_path, headed, viewport }) => {
       const refuse = (message: string) => ({
         content: [{ type: 'text' as const, text: message }],
         isError: true,
@@ -363,6 +368,7 @@ export async function createReplayServer(root = process.cwd(), options: { jev?: 
       });
 
       if (Boolean(drive) === Boolean(goal)) return refuse('Pass exactly one of drive or goal.');
+      if (drive && setup) return refuse('setup is for goal; a drive file declares its own setup.');
       if (goal && !until) return refuse('goal needs until: a selector, text=<visible text> or url=<part of the URL>.');
 
       let driven: Awaited<ReturnType<typeof loadDrive>> | null = null;
@@ -386,7 +392,13 @@ export async function createReplayServer(root = process.cwd(), options: { jev?: 
           viewport: parseViewport(viewport ?? '1440x900'),
           headless: !headed,
           browser: await pool.acquire(!headed),
-          ...(driven ? { drive: driven.drive, setup: driven.setup } : { goal: { goal: goal!, until: until!, inputs: inputs ?? {} }, ...(options.jev ? { jev: options.jev } : {}) }),
+          ...(driven
+            ? { drive: driven.drive, setup: driven.setup }
+            : {
+                goal: { goal: goal!, until: until!, inputs: inputs ?? {} },
+                ...(setup ? { setup } : {}),
+                ...(options.jev ? { jev: options.jev } : {}),
+              }),
         });
       } catch (err) {
         if (err instanceof GoalNotReached) {

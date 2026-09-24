@@ -9,7 +9,6 @@ import {
   describeSession,
   extractionNudge,
   GoalNotReached,
-  JevError,
   list,
   loadDrive,
   openSession,
@@ -455,6 +454,7 @@ export async function createReplayServer(root = process.cwd(), options: { jev?: 
           warnings: result?.warnings ?? [],
           partial: Boolean(partial),
           error: partial?.cause.message ?? null,
+          ...(result?.goalPath ? { goalPath: result.goalPath } : {}),
         },
       };
     },

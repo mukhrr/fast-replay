@@ -12,6 +12,7 @@ import { startDemoServer, type DemoServer } from './helpers/demo-server.js';
 interface ToolResult {
   content: { type: string; text?: string }[];
   isError?: boolean;
+  structuredContent?: Record<string, unknown>;
 }
 
 let server: DemoServer;
@@ -82,6 +83,8 @@ describe('repro_record with a goal', () => {
     const result = await call({ name: 'g3', url: server.baseUrl, goal: 'Open reports', until: 'url=/reports' });
     expect(result.isError).toBeFalsy();
     expect(text(result)).toMatch(/Path: click button "Reports"/);
+    expect(result.structuredContent?.goalPath).toEqual(['click button "Reports"']);
+    expect(existsSync(reproPaths('g3', root).ir)).toBe(true);
     await replay.dispose();
     await client.close();
   });

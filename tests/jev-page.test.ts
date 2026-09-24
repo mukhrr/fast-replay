@@ -79,4 +79,13 @@ describe('page primitives', () => {
     expect(state.fields).toEqual({ Title: 'draft', Password: '********', Sensor: 'Sensor 1', Search: '' });
     expect(state.messages).toEqual(['Saved']);
   });
+
+  it('labels a field by id when it has no label, aria-label or placeholder', async () => {
+    await page.setContent('<input id="qty">');
+    const found = await collectCandidates(page, { qty: '3' });
+    expect(found.candidates.map((c) => c.desc)).toEqual(['type "3" in the "qty" field']);
+    await found.dispose();
+    const state = await readPageState(page);
+    expect(state.fields).toEqual({ qty: '' });
+  });
 });

@@ -40,7 +40,7 @@ export async function collectCandidates(
       const labelOf = (el: Element): string => {
         const id = el.getAttribute('id');
         const label = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
-        return ((label as HTMLElement | null)?.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '').trim();
+        return ((label as HTMLElement | null)?.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || id || '').trim();
       };
       const els: Element[] = [];
       const candidates: Candidate[] = [];

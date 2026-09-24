@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-fast-replay records a browser bug once (via Playwright) and replays it deterministically in seconds, with no model in the loop. Recordings ("repros") are disposable JSON IR in `.repros/`, meant to be deleted once the bug is fixed. Ships as a CLI (`repro`), an MCP server (`repro-mcp`), and a programmatic API.
+fast-replay records a browser bug once (via Playwright) and replays it deterministically in seconds, with no model at replay (an optional record-time model, Jev, can walk to the bug). Recordings ("repros") are disposable JSON IR in `.repros/`, meant to be deleted once the bug is fixed. Ships as a CLI (`repro`), an MCP server (`repro-mcp`), and a programmatic API.
 
 ## Commands
 

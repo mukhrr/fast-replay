@@ -3,7 +3,7 @@
 [![CI](https://github.com/mukhrr/fast-replay/actions/workflows/ci.yml/badge.svg)](https://github.com/mukhrr/fast-replay/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/fast-replay)](https://www.npmjs.com/package/fast-replay)
 
-Record a browser bug once, replay it in seconds, with no model in the loop.
+Record a browser bug once, replay it in seconds, with no model at replay.
 
 Some bugs sit behind state you can only create once: a transferred workspace, a consumed invite, a migrated account. Getting there costs half an hour. Checking whether your fix worked should not cost it again. Do the irreversible part by hand, record the flow that looks at the result, and you own a few-second check you can run forever.
 

@@ -39,8 +39,13 @@ export async function collectCandidates(
     ({ inputs, max }) => {
       const labelOf = (el: Element): string => {
         const id = el.getAttribute('id');
-        const label = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
-        return ((label as HTMLElement | null)?.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || id || '').trim();
+        const forLabel = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+        let text = (forLabel as HTMLElement | null)?.innerText || '';
+        if (!text) {
+          const wrapping = el.closest('label');
+          if (wrapping) text = (wrapping.textContent ?? '').replace(el.textContent ?? '', '');
+        }
+        return (text || el.getAttribute('aria-label') || el.getAttribute('placeholder') || id || '').replace(/\s+/g, ' ').trim();
       };
       const els: Element[] = [];
       const candidates: Candidate[] = [];
@@ -81,23 +86,33 @@ export async function collectCandidates(
   };
 }
 
-export async function readPageState(page: Page): Promise<{ current_path: string; headings: string[]; fields: Record<string, string>; messages: string[] }> {
+export async function readPageState(
+  page: Page,
+): Promise<{ current_path: string; headings: string[]; fields: Record<string, string>; messages: string[]; passwordLabels: string[] }> {
   const inPage = await page.evaluate(() => {
     const labelOf = (el: Element): string => {
       const id = el.getAttribute('id');
-      const label = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
-      return ((label as HTMLElement | null)?.innerText || el.getAttribute('aria-label') || el.getAttribute('placeholder') || id || '').trim();
+      const forLabel = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+      let text = (forLabel as HTMLElement | null)?.innerText || '';
+      if (!text) {
+        const wrapping = el.closest('label');
+        if (wrapping) text = (wrapping.textContent ?? '').replace(el.textContent ?? '', '');
+      }
+      return (text || el.getAttribute('aria-label') || el.getAttribute('placeholder') || id || '').replace(/\s+/g, ' ').trim();
     };
     const fields: Record<string, string> = {};
+    const passwordLabels: string[] = [];
     for (const el of Array.from(document.querySelectorAll('input, select, textarea'))) {
       const input = el as HTMLInputElement;
       if (input.type === 'hidden') continue;
-      fields[labelOf(el)] =
+      const label = labelOf(el);
+      if (input.type === 'password') passwordLabels.push(label);
+      fields[label] =
         input.type === 'password' ? '********' : el.tagName === 'SELECT' ? (el as HTMLSelectElement).selectedOptions[0]?.text ?? '' : input.value;
     }
     const texts = (sel: string) =>
       Array.from(document.querySelectorAll(sel)).map((e) => (e as HTMLElement).innerText.trim()).filter(Boolean);
-    return { headings: texts('h1, h2'), fields, messages: texts('[role="status"], [role="alert"]') };
+    return { headings: texts('h1, h2'), fields, messages: texts('[role="status"], [role="alert"]'), passwordLabels };
   });
   let currentPath = page.url();
   try {

@@ -88,4 +88,19 @@ describe('page primitives', () => {
     const state = await readPageState(page);
     expect(state.fields).toEqual({ qty: '' });
   });
+
+  it('labels a field wrapped in a label when there is no label[for] match', async () => {
+    await page.setContent('<label>Email <input></label>');
+    const found = await collectCandidates(page, { Email: 'a@b.c' });
+    expect(found.candidates.map((c) => c.desc)).toEqual(['type "a@b.c" in the "Email" field']);
+    await found.dispose();
+    const state = await readPageState(page);
+    expect(state.fields).toEqual({ Email: '' });
+  });
+
+  it('reports which fields are password fields, without sending it to Jev', async () => {
+    await page.setContent(HTML);
+    const state = await readPageState(page);
+    expect(state.passwordLabels).toEqual(['Password']);
+  });
 });

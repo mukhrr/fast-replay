@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.3 — 2026-09-25
+
+### Replay no longer acts on the wrong row, or calls a derailed run fixed
+
+On Expensify's Spend list every row carries the same `data-sentry-label`, and a click on a row landed on a layout node with no text of its own. The recorder put that shared label first among the selectors and recorded no identity, so replay opened the first row in the list instead of the $9.12 expense, and the wrong-record check had nothing to compare. A selector that matches more than one element is no longer recorded as a target, an appeared or gone signal, or a CSS path anchor, and a CSS path that still matches several elements is dropped. A click on a node with no text takes its identity from the control it sits in, so replaying into another row stops with `COULD NOT VERIFY` instead of acting on it.
+
+A step whose recorded reaction never arrives now means different things by position. Before the last step the flow went somewhere else and never reached the bug, so `run` reports `COULD NOT VERIFY` naming that step; it used to say `BUG DID NOT REPRODUCE`, which reads as fixed. On the last step it is still a verdict on the bug. `--expect-fixed` is unchanged.
+
+A goal recording now keeps `--until` as evidence the way a drive file's `observe()` does, so its repro checks the bug and not only the path to it. `url=` checks add nothing, having no element to keep.
+
+Repros recorded with earlier versions keep working. Re-recording one that clicked a list row gets the better selectors and identity.
+
 ## 1.0.2 — 2026-09-25
 
 ### Jev is only offered controls a click can reach

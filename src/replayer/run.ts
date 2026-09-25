@@ -400,6 +400,22 @@ export async function runRepro(input: Repro, options: RunOptions = {}): Promise<
         notes.push(
           `${step.id} (${semantic}): recorded reaction no longer occurs — ${outcome.unmet.join('; ')}`,
         );
+      } else if (!outcome.ok && i < repro.steps.length - 1) {
+        // The flow went somewhere else before the step that shows the bug, so
+        // nothing here says whether the bug is still there.
+        return await fail(
+          { paths, page, repro, reactions, timings, startedAt, since: stepStart, expectFixed, notes, baseUrl },
+          {
+            stepId: step.id,
+            stepIndex: i,
+            semantic,
+            kind: 'infrastructure',
+            expected: expectationOf(step),
+            observed: `the flow went off course before reaching the bug: the action ran, but these recorded signals never arrived within ${step.waitAfter.timeoutMs}ms:\n${outcome.unmet
+              .map((u) => `      ${u}`)
+              .join('\n')}`,
+          },
+        );
       } else if (!outcome.ok) {
         return await fail(
           {

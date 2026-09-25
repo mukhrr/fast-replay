@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.1 — 2026-09-25
+
+### Jev is only offered controls a click can reach
+
+On a real app (Expensify) goal recordings timed out: the list of controls Jev chose from counted anything with a size as clickable, so it held a second "More" button hidden with `aria-hidden` behind a side panel, and most controls on the page were covered by that panel. The two "More" buttons had the same label, so Jev could not tell them apart, and picking the hidden one ended in a 30 s click timeout. The list now keeps only what a click can reach, the same checks Playwright makes before clicking: not inside `aria-hidden`, `inert` or `aria-disabled`, not `visibility:hidden` or disabled, and on screen only when the element at its center is the control itself. A control below the fold stays on the list unless a clipping container hides it.
+
+Each option now says where the control sits, so controls that share a label differ: `click button "View details" in row "Taxi $9.12"`, `click button "More" in dialog "Expense"`. This adds the row's text and the dialog, form or region name to what is sent to `api.typesafe.ai`; `repro jev status` lists it.
+
+Jev is asked only once the list of controls stops changing, not just once the network is quiet, so a single-page app's splash screen no longer ends a run with no actions. `--until` holds only on a match a user can see, so text kept mounted under an `aria-hidden` background screen no longer reads as the goal reached. A failed click, fill or select now names the step and the option Jev picked, and fails after 5 s instead of 30.
+
 ## 1.0.0 — 2026-09-24
 
 ### Record by goal, optionally with Jev

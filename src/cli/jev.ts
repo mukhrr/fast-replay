@@ -5,6 +5,7 @@ export const WHAT_IS_SENT = [
   'the URL path (no origin, no query)',
   'page headings',
   'names of visible buttons and links',
+  'where each control sits: the text of its table row or list item, and its dialog, form or region name',
   'field labels and current values, passwords masked',
   'status messages',
   'the actions taken so far',

@@ -71,7 +71,7 @@ describe('repro_record with a goal', () => {
 
   it('records with an injected client and reports the path', async () => {
     await fetch(`${server.baseUrl}/api/reset`, { method: 'POST' });
-    const picks = ['click button "Reports"'];
+    const picks = ['click button "Reports" in navigation'];
     const jev: JevClient = {
       async choice(_s, _i, criteria): Promise<ChoiceAnswer> {
         const want = picks.shift() ?? 'none';
@@ -82,8 +82,8 @@ describe('repro_record with a goal', () => {
     const { client, replay, call } = await connect(jev);
     const result = await call({ name: 'g3', url: server.baseUrl, goal: 'Open reports', until: 'url=/reports' });
     expect(result.isError).toBeFalsy();
-    expect(text(result)).toMatch(/Path: click button "Reports"/);
-    expect(result.structuredContent?.goalPath).toEqual(['click button "Reports"']);
+    expect(text(result)).toMatch(/Path: click button "Reports" in navigation/);
+    expect(result.structuredContent?.goalPath).toEqual(['click button "Reports" in navigation']);
     expect(existsSync(reproPaths('g3', root).ir)).toBe(true);
     await replay.dispose();
     await client.close();

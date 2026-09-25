@@ -1,7 +1,8 @@
 import type { Page, Request } from 'playwright';
 import type { DriveApi } from '../recorder/launch.js';
 import { JevError, type JevClient } from './client.js';
-import { collectCandidates, parseUntil, readPageState, untilHolds } from './page.js';
+import { parseUntil, readPageState, untilHolds, waitForStableCandidates, type Candidate } from './page.js';
+import type { ElementHandle } from 'playwright';
 
 export interface GoalOptions {
   goal: string;
@@ -112,6 +113,23 @@ function trackRequests(page: Page): RequestTracker {
   };
 }
 
+/**
+ * Candidates are checked for reachability before Jev sees them, so an action that
+ * still cannot land within this long has met a change after the check, not a slow page.
+ */
+const ACTION_TIMEOUT_MS = 5_000;
+
+/** Performs the chosen action, naming the step and option if it fails so a run can be diagnosed. */
+export async function performAction(el: ElementHandle<Element>, candidate: Candidate, step: number): Promise<void> {
+  try {
+    if (candidate.kind === 'click') await el.click({ timeout: ACTION_TIMEOUT_MS });
+    else if (candidate.kind === 'fill') await el.fill(candidate.value!, { timeout: ACTION_TIMEOUT_MS });
+    else await el.selectOption({ label: candidate.value! }, { timeout: ACTION_TIMEOUT_MS });
+  } catch (err) {
+    throw new Error(`step ${step}: ${candidate.desc} failed: ${(err as Error).message.split('\n')[0]}`);
+  }
+}
+
 async function settle(page: Page, requests: RequestTracker): Promise<void> {
   await requests.waitForQuiet();
   await page.waitForTimeout(300);
@@ -132,7 +150,7 @@ export function goalDrive(options: GoalOptions, client: JevClient): { drive: (pa
           const { passwordLabels, fields } = await readPageState(page);
           throw new GoalNotReached('max-steps', [...taken], maxSteps, describeInputProblems(options.inputs, fields, passwordLabels));
         }
-        const found = await collectCandidates(page, options.inputs ?? {});
+        const found = await waitForStableCandidates(page, options.inputs ?? {}, MAX_SETTLE_MS);
         try {
           const criteria: Record<string, string> = { none: NONE };
           found.candidates.forEach((c, i) => (criteria[`c${i}`] = c.desc));
@@ -149,10 +167,7 @@ export function goalDrive(options: GoalOptions, client: JevClient): { drive: (pa
           if (!Object.hasOwn(criteria, answer.choice)) throw new JevError('Jev chose an option that was not offered.', 'invalid');
           const index = Number(answer.choice.slice(1));
           const candidate = found.candidates[index]!;
-          const el = await found.element(index);
-          if (candidate.kind === 'click') await el.click();
-          else if (candidate.kind === 'fill') await el.fill(candidate.value!);
-          else await el.selectOption({ label: candidate.value! });
+          await performAction(await found.element(index), candidate, step + 1);
           taken.push(candidate.desc);
         } finally {
           await found.dispose();

@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest';
-import { describeInputProblems } from '../src/jev/driver.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { chromium, type Browser } from 'playwright';
+import { describeInputProblems, performAction } from '../src/jev/driver.js';
+import { collectCandidates } from '../src/jev/page.js';
 
 describe('describeInputProblems', () => {
   it('is silent when every requested label matches a fillable field', () => {
@@ -35,3 +37,31 @@ describe('describeInputProblems', () => {
     ]);
   });
 });
+
+describe('performAction', () => {
+  let browser: Browser;
+  beforeAll(async () => {
+    browser = await chromium.launch();
+  });
+  afterAll(async () => browser?.close());
+
+  it('names the step and the option Jev picked when the action fails, within the short timeout', async () => {
+    const page = await browser.newPage();
+    await page.setContent('<button>Save</button>');
+    const found = await collectCandidates(page, {});
+    const el = await found.element(0);
+    // Covered after it was offered, the way an overlay that opens late would.
+    await page.evaluate(() => {
+      const cover = document.createElement('div');
+      cover.style.cssText = 'position:fixed;inset:0;background:#fff';
+      document.body.appendChild(cover);
+    });
+    const started = Date.now();
+    const err = await performAction(el, found.candidates[0]!, 3).catch((e: Error) => e);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(String((err as Error).message)).toMatch(/^step 3: click button "Save" failed: /);
+    await found.dispose();
+    await page.close();
+  });
+});
+

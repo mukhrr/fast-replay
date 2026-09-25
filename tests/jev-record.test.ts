@@ -62,7 +62,7 @@ describe('goal-driven recording', () => {
     // on once the page's own load state goes idle.
     await fetch(`${server.baseUrl}/api/reset`, { method: 'POST' });
     const jev = scriptedJev([
-      'click button "Reports"',
+      'click button "Reports" in navigation',
       'type "Weekly rollup" in the "Report title" field',
       'choose "Sensor 3" in the "Sensor" field',
       'click button "Generate report"',
@@ -80,7 +80,7 @@ describe('goal-driven recording', () => {
       jev,
     });
     expect(result.goalPath).toEqual([
-      'click button "Reports"',
+      'click button "Reports" in navigation',
       'type "Weekly rollup" in the "Report title" field',
       'choose "Sensor 3" in the "Sensor" field',
       'click button "Generate report"',
@@ -151,7 +151,7 @@ describe('goal-driven recording', () => {
   });
 
   it('saves nothing when the step limit is hit', async () => {
-    const jev = scriptedJev(['click button "Reports"', 'click button "Sensors"']);
+    const jev = scriptedJev(['click button "Reports" in navigation', 'click button "Sensors" in navigation']);
     const err = await record({
       name: 'jev-limit',
       baseUrl: server.baseUrl,
@@ -162,7 +162,7 @@ describe('goal-driven recording', () => {
     }).catch((e) => e);
     expect(err).toBeInstanceOf(GoalNotReached);
     expect(err.reason).toBe('max-steps');
-    expect(err.path).toEqual(['click button "Reports"', 'click button "Sensors"']);
+    expect(err.path).toEqual(['click button "Reports" in navigation', 'click button "Sensors" in navigation']);
     expect(existsSync(reproPaths('jev-limit', root).ir)).toBe(false);
   });
 

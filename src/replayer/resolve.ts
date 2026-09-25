@@ -98,8 +98,7 @@ export async function resolveTarget(
     if (!selector) continue;
     const timeout = i === 0 ? timeouts.first : timeouts.subsequent;
     try {
-      const locator = page.locator(selector).first();
-      await locator.waitFor({ state: 'visible', timeout });
+      const locator = await reachableMatch(page, selector, timeout);
       return { locator, selector, candidateIndex: i };
     } catch (err) {
       attempts.push({ selector, error: firstLine(err) });
@@ -109,13 +108,30 @@ export async function resolveTarget(
   if (onExhausted) {
     const healed = await onExhausted(target, page);
     if (healed) {
-      const locator = page.locator(healed).first();
-      await locator.waitFor({ state: 'visible', timeout: timeouts.first });
+      const locator = await reachableMatch(page, healed, timeouts.first);
       return { locator, selector: healed, candidateIndex: -1 };
     }
   }
 
   throw new TargetResolutionError(target, attempts);
+}
+
+/** Matches outside any subtree hidden from the user, such as a background screen kept mounted. */
+const EXPOSED = ':not([aria-hidden="true"]):not([aria-hidden="true"] *):not([inert]):not([inert] *)';
+
+/**
+ * The first rendered match, preferring one a user can reach.
+ *
+ * DOM order puts a background screen's copy of a control before the one in the
+ * panel above it, and both carry the same text, so the identity check cannot
+ * tell them apart. When every match is under aria-hidden, as an icon inside a
+ * button is, the rendered match is still used.
+ */
+async function reachableMatch(page: Page, selector: string, timeout: number): Promise<Locator> {
+  const rendered = page.locator(selector).filter({ visible: true });
+  await rendered.first().waitFor({ state: 'visible', timeout });
+  const exposed = rendered.and(page.locator(EXPOSED));
+  return (await exposed.count()) > 0 ? exposed.first() : rendered.first();
 }
 
 function firstLine(err: unknown): string {

@@ -18,6 +18,7 @@ interface AgentApi {
   accessibleName(el: Element): string;
   getRole(el: Element): string | null;
   identityOf(el: Element): string | undefined;
+  isVisible(el: Element): boolean;
 }
 
 declare global {
@@ -35,7 +36,8 @@ beforeAll(async () => {
     import { buildCandidates, semanticOf, appearedSelector, goneSelector } from './selectors.js';
     import { accessibleName, getRole } from './roles.js';
     import { identityOf } from './selectors.js';
-    (window as any).__agent = { buildCandidates, semanticOf, appearedSelector, goneSelector, accessibleName, getRole, identityOf };
+    import { isVisible } from './visibility.js';
+    (window as any).__agent = { buildCandidates, semanticOf, appearedSelector, goneSelector, accessibleName, getRole, identityOf, isVisible };
   `);
 
   browser = await chromium.launch({ headless: true });
@@ -364,3 +366,34 @@ describe('wait-signal selectors', () => {
     expect(await ask(html, 'div', 'goneSelector')).toBe('[data-testid="toast"]');
   });
 });
+
+describe('a twin hidden from assistive tech', () => {
+  // A background screen kept mounted under aria-hidden, as Expensify does behind its side panel.
+  const TWIN = `
+    <div aria-hidden="true"><button id="bg">More</button></div>
+    <div role="dialog" aria-label="Details"><button id="fg">More</button></div>`;
+
+  it('does not shift the role selector index for the visible control', async () => {
+    await load(TWIN);
+    const candidates = await page.evaluate(() => window.__agent.buildCandidates(document.getElementById('fg')!));
+    const role = candidates.find((c) => c.startsWith('role='));
+    expect(role).toBe('role=button[name="More"]');
+    // What replay will see: the role engine skips aria-hidden, so this must name exactly #fg.
+    expect(await page.locator(role!).evaluateAll((els) => els.map((e) => e.id))).toEqual(['fg']);
+  });
+
+  it('offers no role selector for a control the role engine cannot see', async () => {
+    await load(TWIN);
+    const candidates = await page.evaluate(() => window.__agent.buildCandidates(document.getElementById('bg')!));
+    expect(candidates.some((c) => c.startsWith('role='))).toBe(false);
+  });
+
+  it('is not visible to wait signals when an ancestor is aria-hidden or inert', async () => {
+    await load(`${TWIN}<div inert><p id="in">Saved</p></div><p id="ok">Saved</p>`);
+    const seen = await page.evaluate(() =>
+      ['bg', 'fg', 'in', 'ok'].map((id) => window.__agent.isVisible(document.getElementById(id)!)),
+    );
+    expect(seen).toEqual([false, true, false, true]);
+  });
+});
+

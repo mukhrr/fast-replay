@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.0.1 — 2026-09-25
+## 1.0.2 — 2026-09-25
 
 ### Jev is only offered controls a click can reach
 
@@ -9,6 +9,12 @@ On a real app (Expensify) goal recordings timed out: the list of controls Jev ch
 Each option now says where the control sits, so controls that share a label differ: `click button "View details" in row "Taxi $9.12"`, `click button "More" in dialog "Expense"`. This adds the row's text and the dialog, form or region name to what is sent to `api.typesafe.ai`; `repro jev status` lists it.
 
 Jev is asked only once the list of controls stops changing, not just once the network is quiet, so a single-page app's splash screen no longer ends a run with no actions. `--until` holds only on a match a user can see, so text kept mounted under an `aria-hidden` background screen no longer reads as the goal reached. A failed click, fill or select now names the step and the option Jev picked, and fails after 5 s instead of 30.
+
+### Hidden twins no longer mislead recording and replay
+
+The same kind of background screen broke repros recorded by hand or by a drive file. The recorder counted an `aria-hidden` twin when numbering a `role=` selector, but Playwright's role engine skips it, so a click on the visible control could record `>> nth=1` and match nothing at replay. It now counts what the role engine counts, offers no role selector for a control that engine cannot see, and no longer records an element under an `aria-hidden` or `inert` ancestor as a wait signal. At replay a selector resolves to the first rendered match a user can reach, ahead of a copy under `aria-hidden` or `inert` earlier in the page, and falls back to the first rendered match when every match is under one, as an icon inside a button is. An appeared wait and target resolution also skip a first match that is not rendered. Existing repros need no change.
+
+1.0.1 was not published; its changes are in this release.
 
 ## 1.0.0 — 2026-09-24
 

@@ -81,8 +81,10 @@ export async function waitForReaction(ctx: WaitContext, waitAfter: WaitAfter): P
   for (const selector of waitAfter.domAppeared ?? []) {
     jobs.push({
       label: `appeared ${selector}`,
+      // Any rendered match counts: the first in the DOM may be a copy that is not displayed.
       run: ctx.page
         .locator(selector)
+        .filter({ visible: true })
         .first()
         .waitFor({ state: 'visible', timeout })
         .then(() => undefined),

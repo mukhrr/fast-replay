@@ -1,6 +1,7 @@
 import type { CapturedTarget } from '../types.js';
 import { accessibleName, getRole, ownText } from './roles.js';
 import { clean, escAttr, escId, isStableClass, isStableToken, renderedText } from './text.js';
+import { isHiddenForAria } from './visibility.js';
 
 /**
  * Selector-candidate generation.
@@ -55,6 +56,7 @@ export function idSelector(el: Element): string | null {
 }
 
 export function roleNameSelector(el: Element): string | null {
+  if (isHiddenForAria(el)) return null;
   const role = getRole(el);
   if (!role) return null;
   const name = accessibleName(el);
@@ -167,7 +169,7 @@ export function buildCandidates(el: Element): string[] {
   if (roleName) {
     const role = getRole(el);
     const name = accessibleName(el);
-    const matches = allElements().filter((c) => getRole(c) === role && accessibleName(c) === name);
+    const matches = allElements().filter((c) => getRole(c) === role && accessibleName(c) === name && !isHiddenForAria(c));
     push(withNth(roleName, el, matches));
   }
 

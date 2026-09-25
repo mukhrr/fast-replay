@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.4 — 2026-09-25
+
+### With a key set, recording starts with Jev
+
+A TypeSafe key only changed anything when `--goal` was passed, so a plain `repro record` still waited for someone to click. Now, with a key set and a terminal attached, it asks what Jev should do, how to tell it got there (the `--until` check) and any values it may type, as `Label=value` pairs separated by `;`. Enter on the first question, or `--by-hand`, records by hand as before; a run without a terminal, or with `--goal` or `--drive`, never asks. The MCP server tells agents with a key set to try `repro_record` with a goal first and write a drive file when Jev answers none or the flow types into the same field twice.
+
 ## 1.0.3 — 2026-09-25
 
 ### Replay no longer acts on the wrong row, or calls a derailed run fixed

@@ -32,7 +32,7 @@ import { loadSteps, STEPS_DIR } from '../steps.js';
 import { IRValidationError, type Repro } from '../ir/schema.js';
 import type { RunResult } from '../replayer/run.js';
 import { age, bold, cyan, dim, green, ms, red, table, truncate, yellow } from './format.js';
-import { parseInputs, parseMaxSteps, readSecret, WHAT_IS_SENT } from './jev.js';
+import { parseInputs, parseMaxSteps, promptForGoal, readSecret, WHAT_IS_SENT, withTerminalQuestions } from './jev.js';
 import { createJevClient } from '../jev/client.js';
 import { credentialsPath, deleteKey, resolveKey, saveKey } from '../jev/key.js';
 import { markNoticeShown, noticeText, shouldShowNotice } from '../notice.js';
@@ -75,7 +75,8 @@ program
   .option('--storage-state <file>', 'seed cookies/localStorage/IndexedDB from a Playwright state file')
   .option('--profile <dir>', 'record against a persistent Chromium profile (reuses a login)')
   .option('--drive <file>', 'run a drive file (defineDrive) instead of waiting for a human; headless')
-  .option('--headed', 'with --drive, watch the recording in a visible browser', false)
+  .option('--headed', 'with --drive or a goal, watch the recording in a visible browser', false)
+  .option('--by-hand', 'record by hand even when a TypeSafe key is set, without asking for a goal', false)
   .option('--goal <text>', 'let Jev walk to the bug: what the user is trying to do (needs a TypeSafe key)')
   .option('--until <check>', 'with --goal: selector, text=<visible text> or url=<part of the URL> that means reached')
   .option('--input <Label=value>', 'with --goal: a value Jev may type into the field with that label; repeatable', (v: string, acc: string[]) => [...acc, v], [] as string[])
@@ -84,7 +85,7 @@ program
   .action(async (name: string, opts) => {
     if (opts.goal && opts.drive) throw new Error('--goal and --drive cannot be used together');
     if (opts.goal && !opts.until) throw new Error('--goal needs --until: a selector, text=<visible text> or url=<part of the URL>');
-    const goal = opts.goal
+    let goal = opts.goal
       ? {
           goal: opts.goal as string,
           until: opts.until as string,
@@ -92,6 +93,14 @@ program
           maxSteps: parseMaxSteps(opts.maxSteps as string),
         }
       : undefined;
+
+    // With a key set Jev is the default way to record, so a person at a terminal is
+    // asked for a goal; scripts and piped runs never see a prompt.
+    if (!goal && !opts.drive && !opts.byHand && process.stdin.isTTY && process.stdout.isTTY && keyIsSet()) {
+      const answers = await withTerminalQuestions(promptForGoal);
+      if (answers) goal = { ...answers, maxSteps: parseMaxSteps(opts.maxSteps as string) };
+      else console.log(dim('  Recording by hand.'));
+    }
 
     const viewport = parseViewport(opts.viewport);
     const driven = opts.drive ? await loadDrive(path.resolve(opts.drive)) : null;
@@ -568,6 +577,16 @@ jev
     console.log(dim('sent per step while recording with --goal, never at replay:'));
     for (const item of WHAT_IS_SENT) console.log(dim(`  - ${item}`));
   });
+
+/** A broken credentials file is reported and treated as no key, so recording by hand still works. */
+function keyIsSet(): boolean {
+  try {
+    return resolveKey() !== null;
+  } catch (err) {
+    console.error(yellow(`! ${(err as Error).message}`));
+    return false;
+  }
+}
 
 async function main(): Promise<void> {
   try {

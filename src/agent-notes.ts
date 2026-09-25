@@ -110,7 +110,11 @@ export async function renderProjectSnapshot(root: string): Promise<string> {
 export async function buildInstructions(root: string): Promise<string> {
   let jev = 'Jev: no key set, so repro_record needs a drive file.';
   try {
-    if (resolveKey()) jev = 'Jev: key set, so repro_record accepts goal, until and inputs.';
+    if (resolveKey()) {
+      jev =
+        'Jev: key set. Try repro_record with goal, until and inputs first; write a drive file when Jev answers none, ' +
+        'or when the flow types into the same field twice.';
+    }
   } catch {
     // A broken credentials file surfaces when a goal recording asks for the key.
   }

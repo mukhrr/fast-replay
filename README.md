@@ -115,7 +115,7 @@ repro record report-bug -u http://localhost:5173 \
   --until '[data-testid="report-result"]' --input "Report title=Weekly rollup"
 ```
 
-Jev picks each step in about 0.3 s; `--until` is checked by code and nothing is saved unless it holds. Replay never calls a model. Without a key everything works as before. What is sent: `repro jev status`. Password fields are never filled; sign in with `--storage-state`, `--profile` or a setup step.
+Once a key is set, a plain `repro record <name> -u <url>` asks what Jev should do, how to tell it got there, and any values to type; press Enter on the first question, or pass `--by-hand`, to record by hand. Jev picks each step in about 0.3 s; `--until` is checked by code and nothing is saved unless it holds. Replay never calls a model. Without a key everything works as before. What is sent: `repro jev status`. Password fields are never filled; sign in with `--storage-state`, `--profile` or a setup step.
 
 ## Shared setup steps
 

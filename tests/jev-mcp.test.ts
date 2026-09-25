@@ -51,6 +51,18 @@ describe('repro_record with a goal', () => {
     await client.close();
   });
 
+  it('tells agents to try a goal first when a key is set', async () => {
+    process.env.TYPESAFE_API_KEY = 'apikey_test';
+    try {
+      const { client, replay } = await connect();
+      expect(client.getInstructions()).toMatch(/Jev: key set\. Try repro_record with goal/);
+      await replay.dispose();
+      await client.close();
+    } finally {
+      delete process.env.TYPESAFE_API_KEY;
+    }
+  });
+
   it('refuses a goal without a key', async () => {
     const { client, replay, call } = await connect();
     const result = await call({ name: 'g1', url: server.baseUrl, goal: 'x', until: 'h1' });

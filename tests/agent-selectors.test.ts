@@ -397,3 +397,37 @@ describe('a twin hidden from assistive tech', () => {
   });
 });
 
+describe('list rows that share a test id', () => {
+  // Shaped like Expensify's Spend list: every row carries the same sentry label,
+  // and the click lands on a layout div that has no text of its own.
+  const ROWS = `
+    <div data-sentry-label="Search-TransactionListItem" role="button" tabindex="0" aria-label="Template $325.00">
+      <div class="hit" style="width:200px;height:20px"></div><span>Template</span><span>$325.00</span></div>
+    <div data-sentry-label="Search-TransactionListItem" role="button" tabindex="0" aria-label="Car $9.12 Tax no longer valid.">
+      <div class="hit" style="width:200px;height:20px"></div><span>Car</span><span>$9.12</span></div>`;
+
+  it('does not offer a test id that names every row', async () => {
+    await load(ROWS);
+    const candidates = await page.evaluate(() =>
+      window.__agent.buildCandidates(document.querySelectorAll('.hit')[1]!),
+    );
+    expect(candidates.some((c) => c.includes('Search-TransactionListItem'))).toBe(false);
+    // The first candidate must name the $9.12 row alone at replay.
+    expect(await page.locator(candidates[0]!).count()).toBe(1);
+    expect(await page.locator(candidates[0]!).getAttribute('aria-label')).toBe('Car $9.12 Tax no longer valid.');
+  });
+
+  it('takes identity from the control the click lands in when the target has no text', async () => {
+    await load(ROWS);
+    const identity = await page.evaluate(() => window.__agent.identityOf(document.querySelectorAll('.hit')[1]!));
+    expect(identity).toBe('Car $9.12 Tax no longer valid.');
+  });
+
+  it('waits on a shared test id neither appearing nor going away', async () => {
+    await load(ROWS);
+    const row = '[data-sentry-label="Search-TransactionListItem"]';
+    expect(await ask(ROWS, row, 'goneSelector')).toBeNull();
+    expect(await ask(ROWS, row, 'appearedSelector')).not.toBe(row);
+  });
+});
+

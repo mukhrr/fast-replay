@@ -48,6 +48,8 @@ describe('goal-driven recording', () => {
       jev,
     });
     expect(result.goalPath).toEqual(['type "Boiler inlet" in the "New sensor name" field', 'click button "Add sensor"']);
+    // --until is the evidence of the bug, kept the way a drive file's observe() keeps it.
+    expect(result.repro.assertion.finalState.domAppeared).toContain('text="Boiler inlet"');
     expect(result.repro.steps.length).toBeGreaterThanOrEqual(2);
     expect(await readFile(result.irPath, 'utf8')).not.toMatch(/data-jev/);
 

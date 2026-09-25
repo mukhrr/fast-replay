@@ -70,11 +70,28 @@ export function roleNameSelector(el: Element): string | null {
  * because a wait for count===0 would never settle while siblings remain.
  */
 export function appearedSelector(el: Element): string | null {
-  return testIdSelector(el) ?? idSelector(el) ?? roleNameSelector(el);
+  return ownSelector(testIdSelector(el), el) ?? ownSelector(idSelector(el), el) ?? roleNameSelector(el);
 }
 
 export function goneSelector(el: Element): string | null {
-  return testIdSelector(el) ?? idSelector(el);
+  return ownSelector(testIdSelector(el), el) ?? ownSelector(idSelector(el), el);
+}
+
+/**
+ * The selector, when nothing but `el` answers to it.
+ *
+ * A test id repeated on every row of a list names the list, not the row: as a
+ * target it resolves to the first row at replay, and as a gone signal it never
+ * settles while the other rows remain. A detached element passes when nothing
+ * else matches, which is exactly "gone".
+ */
+function ownSelector(selector: string | null, el: Element): string | null {
+  if (!selector) return null;
+  try {
+    return Array.from(document.querySelectorAll(selector)).every((m) => m === el) ? selector : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -106,9 +123,10 @@ export function buildCssPath(el: Element): string | null {
   while (cur && cur.nodeType === 1 && cur !== document.documentElement && depth < MAX_CSS_PATH_DEPTH) {
     const node: Element = cur;
 
-    // Anchoring on a testid/id ancestor beats a long fragile tag chain.
+    // Anchoring on a testid/id ancestor beats a long fragile tag chain, but only
+    // one that names that ancestor alone; a test id shared by every row does not.
     if (depth > 0) {
-      const anchor = testIdSelector(node) ?? idSelector(node);
+      const anchor = ownSelector(testIdSelector(node), node) ?? ownSelector(idSelector(node), node);
       if (anchor) {
         segs.unshift(anchor);
         break;
@@ -139,8 +157,9 @@ export function buildCssPath(el: Element): string | null {
 
   if (!segs.length) return null;
   const sel = segs.join(' > ');
+  // A path that still matches several elements would resolve to whichever comes first.
   try {
-    return document.querySelectorAll(sel).length ? sel : null;
+    return document.querySelectorAll(sel).length === 1 ? sel : null;
   } catch {
     return null;
   }
@@ -157,12 +176,12 @@ export function buildCandidates(el: Element): string[] {
     if (s && out.indexOf(s) === -1) out.push(s);
   };
 
-  push(testIdSelector(el));
-  push(idSelector(el));
+  push(ownSelector(testIdSelector(el), el));
+  push(ownSelector(idSelector(el), el));
 
   const nameAttr = el.getAttribute('name');
   if (nameAttr && isStableToken(nameAttr)) {
-    push(`${el.tagName.toLowerCase()}[name="${escAttr(nameAttr)}"]`);
+    push(ownSelector(`${el.tagName.toLowerCase()}[name="${escAttr(nameAttr)}"]`, el));
   }
 
   const roleName = roleNameSelector(el);
@@ -230,8 +249,8 @@ function interactiveHostSelectors(el: Element): string[] {
     if (s && out.indexOf(s) === -1) out.push(s);
   };
 
-  push(testIdSelector(host));
-  push(idSelector(host));
+  push(ownSelector(testIdSelector(host), host));
+  push(ownSelector(idSelector(host), host));
   push(roleNameSelector(host));
 
   // Nothing identifies it, so name it by the control's own visible text. A
@@ -363,6 +382,14 @@ export function identityOf(el: Element): string | undefined {
   // is the same on every row of a member list, so identity has to come from
   // the row instead — which is precisely the case this check exists for.
   if (own && countSharingLabel(own) <= 1) return own;
+
+  // A click on a layout node with no text of its own is handled by the control
+  // around it, and that control's name is what tells this row from the next.
+  if (!own) {
+    const host = el.parentElement?.closest(INTERACTIVE);
+    const hostName = host ? accessibleName(host) || renderedText(host, 80) : '';
+    if (hostName && countSharingLabel(hostName) <= 1) return hostName;
+  }
 
   const row = el.closest(
     'tr, [role="row"], li, [role="listitem"], [data-testid*="row"], [data-testid*="Row"]',

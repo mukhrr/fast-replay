@@ -140,12 +140,16 @@ export function goalDrive(options: GoalOptions, client: JevClient): { drive: (pa
   const maxSteps = options.maxSteps ?? 12;
   const taken: string[] = [];
 
-  const drive = async (page: Page): Promise<void> => {
+  const drive = async (page: Page, api: DriveApi): Promise<void> => {
     const requests = trackRequests(page);
     try {
       await settle(page, requests);
       for (let step = 0; ; step++) {
-        if (await untilHolds(page, check)) return;
+        if (await untilHolds(page, check)) {
+          // --until is the evidence of the bug, so it is kept as a drive file's observe() keeps it.
+          if (check.kind !== 'url') await api.observe(check.kind === 'text' ? `text=${JSON.stringify(check.value)}` : check.value);
+          return;
+        }
         if (step >= maxSteps) {
           const { passwordLabels, fields } = await readPageState(page);
           throw new GoalNotReached('max-steps', [...taken], maxSteps, describeInputProblems(options.inputs, fields, passwordLabels));

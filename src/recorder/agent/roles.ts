@@ -1,4 +1,4 @@
-import { clean, escAttr } from './text.js';
+import { escAttr, normalize } from './text.js';
 
 /** ARIA roles and accessible names, computed from a live element. */
 
@@ -96,9 +96,15 @@ export function isEditable(el: Element | null): el is HTMLElement {
  * selectors useful, without shipping the full 600-line spec. Order follows
  * accname's precedence for the sources we do implement.
  */
+/**
+ * The accessible name, computed the way Playwright's role engine computes it.
+ *
+ * A `role=` selector matches the whole name exactly, so a name built another way,
+ * or shortened for display, resolves to nothing at replay.
+ */
 export function accessibleName(el: Element): string {
   const aria = el.getAttribute('aria-label');
-  if (aria && aria.trim()) return clean(aria);
+  if (aria && aria.trim()) return normalize(aria);
 
   const labelledby = el.getAttribute('aria-labelledby');
   if (labelledby) {
@@ -106,8 +112,8 @@ export function accessibleName(el: Element): string {
       .split(/\s+/)
       .map((id) => document.getElementById(id))
       .filter((n): n is HTMLElement => !!n)
-      .map((n) => clean(n.textContent));
-    const joined = clean(parts.filter(Boolean).join(' '));
+      .map((n) => contentName(n));
+    const joined = normalize(parts.filter(Boolean).join(' '));
     if (joined) return joined;
   }
 
@@ -117,31 +123,54 @@ export function accessibleName(el: Element): string {
     if (id) {
       const forLabel = document.querySelector(`label[for="${escAttr(id)}"]`);
       if (forLabel) {
-        const t = clean(forLabel.textContent);
+        const t = normalize(contentName(forLabel));
         if (t) return t;
       }
     }
     const wrapping = el.closest('label');
     if (wrapping) {
-      const t = clean(wrapping.textContent);
+      const t = normalize(contentName(wrapping));
       if (t) return t;
     }
   }
 
   for (const attr of ['alt', 'title', 'placeholder']) {
     const v = el.getAttribute(attr);
-    if (v && v.trim()) return clean(v);
+    if (v && v.trim()) return normalize(v);
   }
 
   const role = getRole(el);
   if (role && NAME_FROM_CONTENT.includes(role)) {
-    const t = clean(el.textContent);
+    const t = normalize(contentName(el));
     if (t) return t;
   }
   return '';
 }
 
+/**
+ * Name from content: text, a child's own label or alt, nothing hidden, and a
+ * space around every child that is not laid out inline, as the role engine does.
+ */
+function contentName(el: Element): string {
+  let out = '';
+  for (const node of Array.from(el.childNodes)) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      out += node.textContent ?? '';
+      continue;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) continue;
+    const child = node as Element;
+    if (child.getAttribute('aria-hidden') === 'true') continue;
+    const style = window.getComputedStyle(child);
+    if (style.display === 'none' || style.visibility === 'hidden') continue;
+    const label = child.getAttribute('aria-label')?.trim() || (child.tagName === 'IMG' ? child.getAttribute('alt') ?? '' : '');
+    const part = label || contentName(child);
+    out += style.display === 'inline' && child.tagName !== 'BR' ? part : ` ${part} `;
+  }
+  return out;
+}
+
 /** Text of the element itself, used for the `text=` selector candidate. */
 export function ownText(el: Element): string {
-  return clean(el.textContent, 60);
+  return normalize(el.textContent);
 }

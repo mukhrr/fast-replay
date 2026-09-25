@@ -80,14 +80,7 @@ export async function performStep(
     // nor deny which record it belongs to — only the row can. Checking just one
     // of the two would refuse on every correct list row.
     const found = await locator
-      .evaluate((el) => {
-        const self = (el as HTMLElement).innerText || el.textContent || '';
-        const row = el.closest(
-          'tr, [role="row"], li, [role="listitem"], [data-testid*="row"], [data-testid*="Row"]',
-        );
-        const context = row && row !== el ? ((row as HTMLElement).innerText ?? '') : '';
-        return `${self} ${context}`;
-      })
+      .evaluate(identityText)
       .catch(() => '');
     if (!identityMatches(found, identity)) {
       throw new IdentityMismatchError(target, resolved.selector, found.replace(/\s+/g, ' ').trim());
@@ -165,3 +158,22 @@ function parsePosition(value: string | null): { x: number; y: number } {
     return { x: 0, y: 0 };
   }
 }
+
+/**
+ * The text a target's identity is checked against: the element's field labels,
+ * aria-label and rendered text, the control it sits in, and its row. The recorder builds identity
+ * from the same sources (identityLabel in recorder/agent/selectors.ts).
+ */
+export function identityText(el: Element): string {
+  const labelAndText = (e: Element | null): string => {
+    if (!e) return '';
+    const fieldLabels = Array.from((e as HTMLInputElement).labels ?? []).map((l) => l.innerText).join(' ');
+    return `${fieldLabels} ${e.getAttribute('aria-label') ?? ''} ${(e as HTMLElement).innerText ?? e.textContent ?? ''}`;
+  };
+  const host = el.parentElement?.closest(
+    'button, a[href], [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [tabindex], [onclick]',
+  );
+  const row = el.closest('tr, [role="row"], li, [role="listitem"], [data-testid*="row"], [data-testid*="Row"]');
+  return `${labelAndText(el)} ${labelAndText(host ?? null)} ${row && row !== el ? labelAndText(row) : ''}`;
+}
+

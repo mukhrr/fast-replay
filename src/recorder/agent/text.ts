@@ -7,6 +7,21 @@ export function clean(s: string | null | undefined, max = 80): string {
   return t.length > max ? `${t.slice(0, max - 1)}…` : t;
 }
 
+/** Whitespace collapsed, never shortened: for text a selector or identity must match exactly. */
+export function normalize(s: string | null | undefined): string {
+  return (s ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * The first `max` characters, with no ellipsis.
+ *
+ * For substring matches such as `:has-text` or an identity check, where a
+ * prefix still matches and an ellipsis never does.
+ */
+export function prefix(s: string | null | undefined, max: number): string {
+  return normalize(s).slice(0, max).trimEnd();
+}
+
 /** Escape a value for use inside a double-quoted selector attribute. */
 export function escAttr(v: string): string {
   return v.replace(/\\/g, '\\\\').replace(/"/g, '\\"');

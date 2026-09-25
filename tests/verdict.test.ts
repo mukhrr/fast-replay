@@ -57,3 +57,14 @@ describe('a recorded reaction that never arrives', () => {
     expect(result.failure?.stepIndex).toBe(stepIndex);
   });
 });
+
+describe('identity', () => {
+  it('reaches the IR for a click on a row control whose label is shared', async () => {
+    await writeFile(reproPaths('flow', root).ir, original);
+    const repro = await readRepro('flow', root);
+    // The demo flow deletes Sensor 2 through a "Delete" button on its row.
+    const del = repro.steps.find((s) => s.action === 'click' && s.target?.semantic.includes('Delete'));
+    expect(del?.target?.identity).toMatch(/Sensor 2/);
+  });
+});
+

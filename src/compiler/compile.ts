@@ -216,7 +216,12 @@ export function compile(trace: RecordingTrace, options: CompileOptions): Repro {
     };
 
     if (action.target) {
-      step.target = { candidates: action.target.candidates, semantic: action.target.semantic };
+      // identity is what replay checks before acting; without it the wrong-record check never runs.
+      step.target = {
+        candidates: action.target.candidates,
+        semantic: action.target.semantic,
+        ...(action.target.identity ? { identity: action.target.identity } : {}),
+      };
     }
 
     const settled = trace.focus.filter((f) => f.t >= action.t && f.t <= windowEnd).pop();

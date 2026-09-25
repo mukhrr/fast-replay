@@ -1,6 +1,6 @@
 import type { CapturedTarget } from '../types.js';
 import { accessibleName, getRole, ownText } from './roles.js';
-import { clean, escAttr, escId, isStableClass, isStableToken, renderedText } from './text.js';
+import { clean, escAttr, escId, isStableClass, isStableToken, prefix, renderedText } from './text.js';
 import { isHiddenForAria } from './visibility.js';
 
 /**
@@ -41,6 +41,7 @@ const INTERACTIVE =
   '[role="option"], [role="tab"], [role="checkbox"], [role="radio"], [role="switch"], ' +
   '[tabindex], [data-focusable="true"], [onclick]';
 const MAX_CSS_PATH_DEPTH = 6;
+const MAX_TEXT_SELECTOR = 80;
 
 export function testIdSelector(el: Element): string | null {
   for (const attr of TEST_ID_ATTRS) {
@@ -204,8 +205,9 @@ export function buildCandidates(el: Element): string[] {
 
   const cssPath = buildCssPath(el);
   const text = ownText(el);
+  // text="…" matches the whole text exactly, so a long one is left to the other candidates.
   const textSelector =
-    text && isSmallestWithText(el, text)
+    text && text.length <= MAX_TEXT_SELECTOR && isSmallestWithText(el, text)
       ? withNth(`text="${escAttr(text)}"`, el, allElements().filter((c) => isSmallestWithText(c, text)))
       : null;
 
@@ -256,7 +258,9 @@ function interactiveHostSelectors(el: Element): string[] {
   // Nothing identifies it, so name it by the control's own visible text. A
   // wrapper that contains the label is exactly what `:has-text` selects, and it
   // survives the label being re-wrapped or restyled.
-  const label = renderedText(host, 60);
+  // :has-text matches the raw text, with no spaces between blocks, so it is built
+  // from that and shortened to a prefix, which still matches, never with an ellipsis.
+  const label = prefix(host.textContent, 60);
   if (label) {
     const tag = host.tagName.toLowerCase();
     const role = host.getAttribute('role');
@@ -362,7 +366,7 @@ function contextLabel(el: Element): string {
  */
 export function semanticOf(el: Element): string {
   const role = getRole(el) || el.tagName.toLowerCase();
-  const name = accessibleName(el) || ownText(el);
+  const name = clean(accessibleName(el) || ownText(el), 80);
   const head = name ? `${name} ${role}` : role;
   return head + contextLabel(el);
 }
@@ -376,7 +380,7 @@ export function semanticOf(el: Element): string {
  * list entry from the next.
  */
 export function identityOf(el: Element): string | undefined {
-  const own = accessibleName(el) || renderedText(el, 80);
+  const own = identityLabel(el);
 
   // A label shared with other elements cannot tell one from another. "Remove"
   // is the same on every row of a member list, so identity has to come from
@@ -387,7 +391,7 @@ export function identityOf(el: Element): string | undefined {
   // around it, and that control's name is what tells this row from the next.
   if (!own) {
     const host = el.parentElement?.closest(INTERACTIVE);
-    const hostName = host ? accessibleName(host) || renderedText(host, 80) : '';
+    const hostName = host ? identityLabel(host) : '';
     if (hostName && countSharingLabel(hostName) <= 1) return hostName;
   }
 
@@ -395,10 +399,23 @@ export function identityOf(el: Element): string | undefined {
     'tr, [role="row"], li, [role="listitem"], [data-testid*="row"], [data-testid*="Row"]',
   );
   if (row && row !== el) {
-    const rowText = renderedText(row, 80);
+    const rowText = prefix((row as HTMLElement).innerText, 80);
     if (rowText) return rowText;
   }
   return own || undefined;
+}
+
+/**
+ * A field's label, an explicit aria-label, else the rendered text: the sources replay reads
+ * back before acting (see identityText in replayer/perform.ts), so a correct target
+ * always matches. A prefix, never an ellipsis, because the check is by substring.
+ */
+function identityLabel(el: Element): string {
+  // A field's text is its value or, for a select, every option, which changes with
+  // the data; its label is what names it.
+  if (['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName)) return prefix(accessibleName(el), 80);
+  const aria = el.getAttribute('aria-label')?.trim();
+  return aria ? prefix(aria, 80) : prefix((el as HTMLElement).innerText ?? el.textContent, 80);
 }
 
 /**

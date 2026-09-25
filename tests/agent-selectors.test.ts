@@ -431,3 +431,42 @@ describe('list rows that share a test id', () => {
   });
 });
 
+describe('names and text that replay can match', () => {
+  // A composite row: block and inline children, a child aria-label, an image alt,
+  // and parts hidden from the accessibility tree, as on Expensify's Spend list.
+  const COMPOSITE = `
+    <div role="button" tabindex="0" id="row"><div role="checkbox" aria-label="checkbox"></div><div>Sep 24</div>
+      <span aria-label="Edit">E</span><div>Draft <b>12.00</b> mi</div><div aria-hidden="true">hidden</div>
+      <div style="display:none">none</div><img alt="Car"><span>$9.12</span><span>x</span></div>
+    <div role="button" tabindex="0" id="other"><div>Sep 25</div><div>Hotel</div><span>$120.00</span></div>`;
+
+  it('names a composite control the way the role engine does', async () => {
+    await load(COMPOSITE);
+    const candidates = await page.evaluate(() => window.__agent.buildCandidates(document.getElementById('row')!));
+    const role = candidates.find((c) => c.startsWith('role='))!;
+    expect(await page.locator(role).evaluateAll((els) => els.map((e) => e.id))).toEqual(['row']);
+  });
+
+  it('builds :has-text from text the text engine can match', async () => {
+    await load(COMPOSITE);
+    const candidates = await page.evaluate(() =>
+      window.__agent.buildCandidates(document.querySelector('#row b')!),
+    );
+    const hasText = candidates.find((c) => c.includes(':has-text('));
+    expect(hasText).toBeDefined();
+    expect(await page.locator(hasText!).evaluateAll((els) => els.map((e) => e.id))).toEqual(['row']);
+  });
+
+  it('never cuts a long name or text short with an ellipsis', async () => {
+    const long = 'Quarterly travel reimbursement for the offsite in Lisbon, including flights and two nights';
+    await load(`<button id="b">${long}</button><button>Other</button>`);
+    const candidates = await page.evaluate(() => window.__agent.buildCandidates(document.getElementById('b')!));
+    const identity = await page.evaluate(() => window.__agent.identityOf(document.getElementById('b')!));
+    expect(candidates.join(' ')).not.toContain('\u2026');
+    expect(identity ?? '').not.toContain('\u2026');
+    for (const c of candidates) {
+      expect(await page.locator(c).evaluateAll((els) => els.map((e) => e.id)), c).toEqual(['b']);
+    }
+  });
+});
+
